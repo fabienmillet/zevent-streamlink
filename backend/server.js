@@ -561,6 +561,80 @@ async function diagnoseObsCollections() {
   }
 }
 
+async function updateMediaSourceBounds(streamerName) {
+  if (!isObsConnected) {
+    logWarn('[OBS] ⚠️ Cannot update media source bounds: not connected to OBS');
+    return false;
+  }
+
+  try {
+    // Trouver la scène pour ce streamer
+    const scenes = await obs.call('GetSceneList');
+    const sceneName = `Stream_${streamerName}`;
+    const existingScene = scenes.scenes.find(scene => 
+      scene.sceneName === sceneName || 
+      scene.sceneName.toLowerCase() === sceneName.toLowerCase()
+    );
+    
+    if (!existingScene) {
+      logError(`[OBS] Scene for ${streamerName} not found`);
+      return false;
+    }
+    
+    const actualSceneName = existingScene.sceneName;
+    const sourceName = `Media_${streamerName}`;
+    
+    // Trouver la source média
+    const sceneItems = await obs.call('GetSceneItemList', { sceneName: actualSceneName });
+    const mediaItem = sceneItems.sceneItems.find(item => 
+      item.sourceName === sourceName || 
+      item.sourceName.toLowerCase() === sourceName.toLowerCase() ||
+      (item.sourceName.toLowerCase().includes(streamerName.toLowerCase()) && 
+       (item.sourceName.toLowerCase().includes('media') || item.inputKind === 'ffmpeg_source'))
+    );
+    
+    if (!mediaItem) {
+      logError(`[OBS] Media source for ${streamerName} not found in scene ${actualSceneName}`);
+      return false;
+    }
+    
+    // Récupérer la résolution du canvas
+    const videoSettings = await obs.call('GetVideoSettings');
+    const canvasWidth = videoSettings.baseWidth;
+    const canvasHeight = videoSettings.baseHeight;
+    
+    logInfo(`[OBS] 📐 Updating media source bounds for ${mediaItem.sourceName}`);
+    
+    // Mettre à jour le transform avec des bounds adaptatives
+    await obs.call('SetSceneItemTransform', {
+      sceneName: actualSceneName,
+      sceneItemId: mediaItem.sceneItemId,
+      sceneItemTransform: {
+        positionX: 0,
+        positionY: 0,
+        scaleX: 1.0,
+        scaleY: 1.0,
+        cropLeft: 0,
+        cropTop: 0,
+        cropRight: 0,
+        cropBottom: 0,
+        // Configuration pour éviter le zoom avec les pubs/écrans d'attente
+        boundsType: 'OBS_BOUNDS_SCALE_INNER', // Garde les proportions dans les limites
+        boundsAlignment: 5, // Centré
+        boundsWidth: canvasWidth,
+        boundsHeight: canvasHeight
+      }
+    });
+    
+    logInfo(`[OBS] ✅ Media source bounds updated for ${mediaItem.sourceName} (${canvasWidth}x${canvasHeight})`);
+    return true;
+    
+  } catch (error) {
+    logError(`[OBS] ❌ Failed to update media source bounds for ${streamerName}: ${error.message}`);
+    return false;
+  }
+}
+
 async function createStreamerScene(streamerName, m3u8Url, hardwareDecoding = false) {
   if (!isObsConnected) {
     logWarn('[OBS] ⚠️ Cannot create scene: not connected to OBS');
@@ -632,6 +706,12 @@ async function createStreamerScene(streamerName, m3u8Url, hardwareDecoding = fal
       if (mediaItem) {
         logDebug(`[OBS] 📐 Configuring media source transform for: ${sourceName}`);
         
+        // Récupérer la résolution du canvas pour calculer l'échelle appropriée
+        const videoSettings = await obs.call('GetVideoSettings');
+        const canvasWidth = videoSettings.baseWidth;
+        const canvasHeight = videoSettings.baseHeight;
+        
+        // Configuration du transform pour éviter les problèmes de zoom avec les pubs/écrans d'attente
         await obs.call('SetSceneItemTransform', {
           sceneName,
           sceneItemId: mediaItem.sceneItemId,
@@ -643,7 +723,12 @@ async function createStreamerScene(streamerName, m3u8Url, hardwareDecoding = fal
             cropLeft: 0,
             cropTop: 0,
             cropRight: 0,
-            cropBottom: 0
+            cropBottom: 0,
+            // Désactiver l'ajustement automatique de la taille pour éviter le zoom
+            boundsType: 'OBS_BOUNDS_SCALE_INNER', // Garde les proportions dans les limites
+            boundsAlignment: 5, // Centré
+            boundsWidth: canvasWidth,
+            boundsHeight: canvasHeight
           }
         });
         
@@ -653,7 +738,7 @@ async function createStreamerScene(streamerName, m3u8Url, hardwareDecoding = fal
           sceneItemEnabled: true
         });
         
-        logDebug(`[OBS] ✅ Media source configured: ${sourceName}`);
+        logDebug(`[OBS] ✅ Media source configured with adaptive bounds: ${sourceName} (${canvasWidth}x${canvasHeight})`);
       }
     } catch (error) {
       logWarn(`[OBS] Could not configure media source transform: ${error.message}`);
@@ -3386,6 +3471,92 @@ async function handleApi(req, res) {
       return sendJson(res, 500, { 
         success: false, 
         error: `Failed to diagnose scenes for ${streamerName}` 
+      });
+    }
+  }
+
+  /**
+   * @swagger
+   * /api/obs/fix-media-bounds:
+   *   post:
+   *     tags:
+   *       - OBS
+   *     summary: Corriger les bounds d'une source média
+   *     description: Corrige la configuration des bounds d'une source média pour éviter les problèmes de zoom lors des publicités ou écrans d'attente en résolution différente. Configure la source pour maintenir les bonnes proportions dans les limites du canvas OBS.
+   *     parameters:
+   *       - in: query
+   *         name: streamer
+   *         required: true
+   *         schema:
+   *           type: string
+   *         description: Nom du streamer dont la source média doit être corrigée
+   *     responses:
+   *       200:
+   *         description: Bounds de la source média corrigés avec succès
+   *         content:
+   *           application/json:
+   *             schema:
+   *               type: object
+   *               properties:
+   *                 success:
+   *                   type: boolean
+   *                   example: true
+   *                 message:
+   *                   type: string
+   *       400:
+   *         description: Paramètre streamer manquant
+   *         content:
+   *           application/json:
+   *             schema:
+   *               type: object
+   *               properties:
+   *                 success:
+   *                   type: boolean
+   *                   example: false
+   *                 error:
+   *                   type: string
+   *                   example: "Missing streamer parameter"
+   *       500:
+   *         description: Erreur lors de la correction des bounds
+   *         content:
+   *           application/json:
+   *             schema:
+   *               type: object
+   *               properties:
+   *                 success:
+   *                   type: boolean
+   *                   example: false
+   *                 error:
+   *                   type: string
+   */
+
+  // POST /api/obs/fix-media-bounds -> corriger les bounds des sources média
+  if (req.method === 'POST' && pathname === '/api/obs/fix-media-bounds') {
+    const streamerName = parsedUrl.searchParams.get('streamer');
+    if (!streamerName) {
+      return sendJson(res, 400, { success: false, error: 'Missing streamer parameter' });
+    }
+    
+    try {
+      logInfo(`[API] Fixing media bounds requested for: ${streamerName}`);
+      const success = await updateMediaSourceBounds(streamerName);
+      
+      if (success) {
+        return sendJson(res, 200, { 
+          success: true, 
+          message: `Media bounds fixed for ${streamerName}` 
+        });
+      } else {
+        return sendJson(res, 500, { 
+          success: false, 
+          error: `Failed to fix media bounds for ${streamerName}` 
+        });
+      }
+    } catch (error) {
+      logError(`[OBS] Failed to fix media bounds for ${streamerName}:`, error.message);
+      return sendJson(res, 500, { 
+        success: false, 
+        error: `Failed to fix media bounds for ${streamerName}` 
       });
     }
   }
