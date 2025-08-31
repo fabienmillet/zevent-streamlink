@@ -1,0 +1,421 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ZEvent-Streamlink - Application de streaming Twitch pour OBS</title>
+    <meta name="description" content="Application web pour centraliser les streams Twitch du ZEvent et les intégrer/contrôler dans OBS.">
+    <meta name="keywords" content="ZEvent, Twitch, Streaming, OBS, Streamlink">
+    
+    <!-- Open Graph -->
+    <meta property="og:title" content="ZEvent-Streamlink">
+    <meta property="og:description" content="Application web pour centraliser les streams Twitch du ZEvent et les intégrer/contrôler dans OBS.">
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="https://github.com/fabienmillet/zevent-streamlink">
+    <meta property="og:image" content="./assets/ZEvent-Streamlink_logo.png">
+    <meta property="og:image:alt" content="ZEvent-Streamlink Logo">
+    <meta property="og:site_name" content="ZEvent-Streamlink">
+    <meta property="og:locale" content="fr_FR">
+    
+    <!-- Twitter Card -->
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="ZEvent-Streamlink">
+    <meta name="twitter:description" content="Application web pour centraliser les streams Twitch du ZEvent et les intégrer/contrôler dans OBS.">
+    <meta name="twitter:image" content="./assets/ZEvent-Streamlink_logo.png">
+    <meta name="twitter:image:alt" content="ZEvent-Streamlink - Application de streaming Twitch pour OBS">
+    
+    <!-- Favicon -->
+    <link rel="icon" type="image/png" href="./assets/zevent.svg">
+    
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    
+    <!-- Styles -->
+    <link rel="stylesheet" href="./css/style.css">
+    
+    <!-- Font Awesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body class="dark-theme">
+    <!-- Navigation -->
+    <nav class="navbar">
+        <div class="nav-container">
+            <div class="nav-logo">
+                <img src="./assets/zevent.svg" alt="ZEvent-Streamlink">
+                <span>ZEvent-Streamlink</span>
+            </div>
+            <ul class="nav-menu">
+                <li><a href="#accueil" class="nav-link">Accueil</a></li>
+                <li><a href="#fonctionnalites" class="nav-link">Fonctionnalités</a></li>
+                <li><a href="#installation" class="nav-link">Installation</a></li>
+                <li><a href="#documentation" class="nav-link">Documentation</a></li>
+                <li><a href="https://github.com/fabienmillet/zevent-streamlink" class="nav-link github-link" target="_blank">
+                    <i class="fab fa-github"></i> GitHub
+                </a></li>
+            </ul>
+            <div class="hamburger">
+                <span></span>
+                <span></span>
+                <span></span>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Hero Section -->
+    <section id="accueil" class="hero">
+        <div class="hero-container">
+            <div class="hero-content">
+                <h1 class="hero-title">
+                    Streamez le <span class="gradient-text">ZEvent</span> 
+                    <br>directement dans OBS
+                </h1>
+                <p class="hero-description">
+                    Application web complète pour gérer et streamer les flux Twitch des participants 
+                    au ZEvent directement dans OBS Studio avec suivi en temps réel.
+                </p>
+                <div class="hero-buttons">
+                    <a href="#installation" class="btn btn-primary">
+                        <i class="fas fa-download"></i>
+                        Commencer
+                    </a>
+                    <a href="https://github.com/fabienmillet/zevent-streamlink" class="btn btn-secondary" target="_blank">
+                        <i class="fab fa-github"></i>
+                        Voir sur GitHub
+                    </a>
+                </div>
+                <div class="hero-stats">
+                    <div class="stat">
+                        <i class="fas fa-star"></i>
+                        <span>Open Source</span>
+                    </div>
+                    <div class="stat">
+                        <i class="fas fa-bolt"></i>
+                        <span>Temps réel</span>
+                    </div>
+                    <div class="stat">
+                        <i class="fas fa-plug"></i>
+                        <span>OBS Integration</span>
+                    </div>
+                </div>
+            </div>
+            <div class="hero-image">
+                <div class="hero-card">
+                    <div class="card-header">
+                        <div class="card-controls">
+                            <span class="control red"></span>
+                            <span class="control yellow"></span>
+                            <span class="control green"></span>
+                        </div>
+                        <span class="card-title">ZEvent-Streamlink</span>
+                    </div>
+                    <div class="card-content">
+                        <div class="stream-item">
+                            <div class="stream-avatar"></div>
+                            <div class="stream-info">
+                                <div class="stream-name"></div>
+                                <div class="stream-status live"></div>
+                            </div>
+                            <div class="stream-actions">
+                                <div class="action-btn"></div>
+                                <div class="action-btn"></div>
+                            </div>
+                        </div>
+                        <div class="stream-item">
+                            <div class="stream-avatar"></div>
+                            <div class="stream-info">
+                                <div class="stream-name"></div>
+                                <div class="stream-status offline"></div>
+                            </div>
+                            <div class="stream-actions">
+                                <div class="action-btn"></div>
+                                <div class="action-btn"></div>
+                            </div>
+                        </div>
+                        <div class="stats-section">
+                            <div class="stat-card">
+                                <div class="stat-value"></div>
+                                <div class="stat-label"></div>
+                            </div>
+                            <div class="stat-card">
+                                <div class="stat-value"></div>
+                                <div class="stat-label"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Features Section -->
+    <section id="fonctionnalites" class="features">
+        <div class="container">
+            <div class="section-header">
+                <h2>Fonctionnalités</h2>
+                <p>Tout ce dont vous avez besoin pour streamer le ZEvent</p>
+            </div>
+            
+            <div class="features-grid">
+                <div class="feature-card">
+                    <div class="feature-icon">
+                        <i class="fas fa-video"></i>
+                    </div>
+                    <h3>Gestion des Streams</h3>
+                    <p>Interface web pour gérer tous vos streams avec suivi automatique de l'état live/offline des streamers via l'API Twitch.</p>
+                    <ul>
+                        <li>Interface Vue.js</li>
+                        <li>État en temps réel</li>
+                        <li>API Twitch</li>
+                    </ul>
+                </div>
+                
+                <div class="feature-card">
+                    <div class="feature-icon">
+                        <i class="fas fa-gamepad"></i>
+                    </div>
+                    <h3>Intégration OBS Studio</h3>
+                    <p>Connexion automatique à OBS Studio via WebSocket avec gestion automatique des scènes et sources.</p>
+                    <ul>
+                        <li>OBS WebSocket</li>
+                        <li>Création automatique des sources</li>
+                        <li>Chat Twitch</li>
+                    </ul>
+                </div>
+                
+                <div class="feature-card">
+                    <div class="feature-icon">
+                        <i class="fas fa-chart-line"></i>
+                    </div>
+                    <h3>Statistiques ZEvent</h3>
+                    <p>Récupération des données via l'API officielle du ZEvent avec suivi des dons, participants et statistiques en temps réel.</p>
+                    <ul>
+                        <li>API officielle</li>
+                        <li>Suivi des dons</li>
+                        <li>Stats des participants</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Technology Stack -->
+    <section class="tech-stack">
+        <div class="container">
+            <div class="section-header">
+                <h2>Technologies utilisées</h2>
+            </div>
+            
+            <div class="tech-grid">
+                <div class="tech-item">
+                    <i class="fab fa-vuejs"></i>
+                    <span>Vue.js</span>
+                </div>
+                <div class="tech-item">
+                    <i class="fab fa-node-js"></i>
+                    <span>Node.js</span>
+                </div>
+                <div class="tech-item">
+                    <i class="fas fa-code"></i>
+                    <span>OBS WebSocket</span>
+                </div>
+                <div class="tech-item">
+                    <i class="fab fa-twitch"></i>
+                    <span>API Twitch</span>
+                </div>
+                <div class="tech-item">
+                    <i class="fas fa-broadcast-tower"></i>
+                    <span>OBS Studio</span>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Installation Section -->
+    <section id="installation" class="installation">
+        <div class="container">
+            <div class="section-header">
+                <h2>Installation</h2>
+                <p>Démarrez en quelques minutes</p>
+            </div>
+            
+            <div class="installation-content">
+                <div class="installation-steps">
+                    <div class="step">
+                        <div class="step-number">1</div>
+                        <div class="step-content">
+                            <h3>Prérequis</h3>
+                            <p>Assurez-vous d'avoir Node.js, npm, OBS Studio avec WebSocket activé, et Git installés.</p>
+                        </div>
+                    </div>
+                    
+                    <div class="step">
+                        <div class="step-number">2</div>
+                        <div class="step-content">
+                            <h3>Cloner le projet</h3>
+                            <div class="code-block">
+                                <code>git clone https://github.com/fabienmillet/zevent-streamlink.git</code>
+                                <button class="copy-btn" onclick="copyToClipboard(this)">
+                                    <i class="fas fa-copy"></i>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="step">
+                        <div class="step-number">3</div>
+                        <div class="step-content">
+                            <h3>Installation des dépendances</h3>
+                            <div class="code-block">
+                                <code>cd zevent-streamlink && npm install</code>
+                                <button class="copy-btn" onclick="copyToClipboard(this)">
+                                    <i class="fas fa-copy"></i>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="step">
+                        <div class="step-number">4</div>
+                        <div class="step-content">
+                            <h3>Configuration</h3>
+                            <p>Copiez le fichier .env.example, configurez vos paramètres et activez WebSocket dans OBS Studio.</p>
+                        </div>
+                    </div>
+                    
+                    <div class="step">
+                        <div class="step-number">5</div>
+                        <div class="step-content">
+                            <h3>Démarrage</h3>
+                            <div class="code-block">
+                                <code>npm run dev</code>
+                                <button class="copy-btn" onclick="copyToClipboard(this)">
+                                    <i class="fas fa-copy"></i>
+                                </button>
+                            </div>
+                            <p class="step-note">Accédez à <strong>http://localhost:5173</strong></p>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="installation-sidebar">
+                    <div class="info-card">
+                        <h4><i class="fas fa-rocket"></i> Démarrage rapide</h4>
+                        <p>Utilisez <code>npm run dev</code> pour lancer le backend et frontend simultanément.</p>
+                    </div>
+                    
+                    <div class="info-card">
+                        <h4><i class="fas fa-cogs"></i> Configuration OBS</h4>
+                        <p>N'oubliez pas d'activer WebSocket dans OBS : Outils → Paramètres du serveur WebSocket</p>
+                    </div>
+                    
+                    <div class="info-card">
+                        <h4><i class="fas fa-link"></i> URLs importantes</h4>
+                        <ul>
+                            <li>Interface : <code>localhost:5173</code></li>
+                            <li>API : <code>localhost:3001</code></li>
+                            <li>Docs : <code>localhost:3001/docs</code></li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Documentation Section -->
+    <section id="documentation" class="documentation">
+        <div class="container">
+            <div class="section-header">
+                <h2>Documentation</h2>
+                <p>Guides et ressources pour bien démarrer</p>
+            </div>
+            
+            <div class="docs-grid">
+                <a href="https://github.com/fabienmillet/zevent-streamlink/blob/main/README.md" class="doc-card" target="_blank">
+                    <div class="doc-icon">
+                        <i class="fas fa-book-open"></i>
+                    </div>
+                    <h3>Guide d'installation</h3>
+                    <p>Instructions détaillées pour installer et configurer l'application.</p>
+                    <span class="doc-link">Lire le guide <i class="fas fa-arrow-right"></i></span>
+                </a>
+                
+                <a href="https://github.com/fabienmillet/zevent-streamlink/issues" class="doc-card" target="_blank">
+                    <div class="doc-icon">
+                        <i class="fas fa-question-circle"></i>
+                    </div>
+                    <h3>Support & FAQ</h3>
+                    <p>Questions fréquentes et support communautaire sur GitHub.</p>
+                    <span class="doc-link">Obtenir de l'aide <i class="fas fa-arrow-right"></i></span>
+                </a>
+                
+                <a href="https://github.com/fabienmillet/zevent-streamlink/blob/main/CONTRIBUTING.md" class="doc-card" target="_blank">
+                    <div class="doc-icon">
+                        <i class="fas fa-hands-helping"></i>
+                    </div>
+                    <h3>Contribuer</h3>
+                    <p>Guide pour contribuer au projet, signaler des bugs ou proposer des améliorations.</p>
+                    <span class="doc-link">Contribuer <i class="fas fa-arrow-right"></i></span>
+                </a>
+            </div>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="footer">
+        <div class="container">
+            <div class="footer-content">
+                <div class="footer-section">
+                    <div class="footer-logo">
+                        <img src="./assets/zevent.svg" alt="ZEvent-Streamlink">
+                        <span>ZEvent-Streamlink</span>
+                    </div>
+                    <p>Application web pour centraliser les streams Twitch du ZEvent et les intégrer/contrôler dans OBS.</p>
+                    <div class="social-links">
+                        <a href="https://github.com/fabienmillet/zevent-streamlink" target="_blank">
+                            <i class="fab fa-github"></i>
+                        </a>
+                    </div>
+                </div>
+                
+                <div class="footer-section">
+                    <h4>Liens rapides</h4>
+                    <ul>
+                        <li><a href="#accueil">Accueil</a></li>
+                        <li><a href="#fonctionnalites">Fonctionnalités</a></li>
+                        <li><a href="#installation">Installation</a></li>
+                        <li><a href="#documentation">Documentation</a></li>
+                    </ul>
+                </div>
+                
+                <div class="footer-section">
+                    <h4>Ressources</h4>
+                    <ul>
+                        <li><a href="https://github.com/fabienmillet/zevent-streamlink" target="_blank">GitHub</a></li>
+                        <li><a href="https://github.com/fabienmillet/zevent-streamlink/issues" target="_blank">Ouvrir une issue</a></li>
+                        <li><a href="https://github.com/fabienmillet/zevent-streamlink/releases" target="_blank">Releases</a></li>
+                    </ul>
+                </div>
+                
+                <div class="footer-section">
+                    <h4>Remerciements</h4>
+                    <ul>
+                        <li><a href="https://zevent.fr/" target="_blank">ZEvent</a></li>
+                        <li><a href="https://obsproject.com/" target="_blank">OBS Studio</a></li>
+                        <li><a href="https://dev.twitch.tv/" target="_blank">Twitch API</a></li>
+                        <li><a href="https://streamlink.github.io/" target="_blank">Streamlink</a></li>
+                    </ul>
+                </div>
+            </div>
+            
+            <div class="footer-bottom">
+                <p>&copy; 2025 ZEvent-Streamlink. Sous licence MIT. Réalisé par Fabien MILLET</p>
+            </div>
+        </div>
+    </footer>
+
+    <!-- JavaScript -->
+    <script src="./js/script.js"></script>
+</body>
+</html>
