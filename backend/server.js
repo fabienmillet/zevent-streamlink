@@ -102,6 +102,131 @@ const OBS_CONFIG = {
 // Nom de la collection OBS utilisée par l'application ZEvent
 const ZEVENT_COLLECTION_NAME = process.env.ZEVENT_COLLECTION_NAME || 'ZEvent';
 
+// --- Utilitaires pour la gestion des noms ---
+function normalizeStreamerName(name) {
+  // Normalise le nom pour éviter les problèmes de casse
+  return name.trim();
+}
+
+function getCanonicalStreamerName(stream) {
+  // Utilise le nom du stream, mais vérifie la cohérence avec l'URL Twitch
+  const twitchUsername = extractTwitchUsername(stream.twitchUrl);
+  if (twitchUsername && twitchUsername.toLowerCase() !== stream.name.toLowerCase()) {
+    logWarn(`[OBS] Warning: Stream name "${stream.name}" doesn't match Twitch username "${twitchUsername}"`);
+  }
+  return stream.name;
+}
+
+async function diagnoseOBSScenes(streamerName) {
+  if (!isObsConnected) {
+    logWarn('[OBS] Cannot diagnose: not connected to OBS');
+    return;
+  }
+  
+  try {
+    logInfo(`[OBS] 🔍 Diagnosing scenes for streamer: ${streamerName}`);
+    
+    const scenes = await obs.call('GetSceneList');
+    logInfo(`[OBS] Found ${scenes.scenes.length} total scenes:`);
+    
+    scenes.scenes.forEach((scene, index) => {
+      logInfo(`[OBS]   ${index + 1}. "${scene.sceneName}"`);
+    });
+    
+    const expectedSceneName = `Stream_${streamerName}`;
+    const existingScene = findSceneByStreamerName(scenes.scenes, streamerName);
+    
+    if (existingScene) {
+      logInfo(`[OBS] ✅ Found scene: "${existingScene.sceneName}" (expected: "${expectedSceneName}")`);
+      
+      // Diagnostic des sources dans la scène
+      const sceneItems = await obs.call('GetSceneItemList', { sceneName: existingScene.sceneName });
+      logInfo(`[OBS] Sources in scene "${existingScene.sceneName}":`);
+      
+      sceneItems.sceneItems.forEach((item, index) => {
+        logInfo(`[OBS]   ${index + 1}. "${item.sourceName}" (${item.inputKind})`);
+      });
+    } else {
+      logError(`[OBS] ❌ No scene found for streamer: ${streamerName} (expected: "${expectedSceneName}")`);
+    }
+  } catch (error) {
+    logError(`[OBS] Failed to diagnose scenes: ${error.message}`);
+  }
+}
+
+function findStreamByName(streamerName) {
+  // Chercher le stream par correspondance exacte
+  let stream = streams.find(s => s.name === streamerName);
+  
+  // Si pas trouvé, essayer une correspondance insensible à la casse
+  if (!stream) {
+    stream = streams.find(s => s.name.toLowerCase() === streamerName.toLowerCase());
+  }
+  
+  // Si toujours pas trouvé, chercher dans l'URL Twitch
+  if (!stream) {
+    stream = streams.find(s => {
+      if (s.twitchUrl) {
+        const twitchUsername = extractTwitchUsername(s.twitchUrl);
+        return twitchUsername && twitchUsername.toLowerCase() === streamerName.toLowerCase();
+      }
+      return false;
+    });
+  }
+  
+  return stream;
+}
+
+function findSceneByStreamerName(scenes, streamerName) {
+  const expectedSceneName = `Stream_${streamerName}`;
+  
+  // D'abord essayer une correspondance exacte
+  let scene = scenes.find(scene => scene.sceneName === expectedSceneName);
+  
+  // Si pas trouvé, essayer une correspondance insensible à la casse
+  if (!scene) {
+    scene = scenes.find(scene => 
+      scene.sceneName.toLowerCase() === expectedSceneName.toLowerCase()
+    );
+  }
+  
+  // Si toujours pas trouvé, chercher toute scène contenant le nom du streamer
+  if (!scene) {
+    scene = scenes.find(scene => 
+      scene.sceneName.toLowerCase().includes(streamerName.toLowerCase()) &&
+      scene.sceneName.toLowerCase().includes('stream')
+    );
+  }
+  
+  return scene;
+}
+
+function findSourceByStreamerName(sceneItems, streamerName, sourceType = 'Media') {
+  const expectedSourceName = `${sourceType}_${streamerName}`;
+  
+  // D'abord essayer une correspondance exacte
+  let item = sceneItems.find(item => item.sourceName === expectedSourceName);
+  
+  // Si pas trouvé, essayer une correspondance insensible à la casse
+  if (!item) {
+    item = sceneItems.find(item => 
+      item.sourceName.toLowerCase() === expectedSourceName.toLowerCase()
+    );
+  }
+  
+  // Si toujours pas trouvé, chercher par nom de streamer et type
+  if (!item) {
+    item = sceneItems.find(item => 
+      item.sourceName.toLowerCase().includes(streamerName.toLowerCase()) &&
+      (sourceType === 'Media' ? 
+        (item.sourceName.toLowerCase().includes('media') || item.inputKind === 'ffmpeg_source') :
+        item.sourceName.toLowerCase().includes(sourceType.toLowerCase()))
+    );
+  }
+  
+  return item;
+}
+
 let obsReconnectAttempts = 0;
 
 async function connectToOBS() {
@@ -248,7 +373,26 @@ async function getSourceId(sourceName) {
   try {
     const currentScene = await getCurrentOBSScene();
     const response = await obs.call('GetSceneItemList', { sceneName: currentScene });
-    const item = response.sceneItems.find(item => item.sourceName === sourceName);
+    
+    // D'abord essayer une correspondance exacte
+    let item = response.sceneItems.find(item => item.sourceName === sourceName);
+    
+    // Si pas trouvé, essayer une correspondance insensible à la casse
+    if (!item) {
+      item = response.sceneItems.find(item => 
+        item.sourceName.toLowerCase() === sourceName.toLowerCase()
+      );
+    }
+    
+    // Si toujours pas trouvé, essayer une correspondance partielle
+    if (!item) {
+      const baseSourceName = sourceName.replace(/^(Stream_|Media_|Chat_)/, '');
+      item = response.sceneItems.find(item => 
+        item.sourceName.toLowerCase().includes(baseSourceName.toLowerCase()) ||
+        baseSourceName.toLowerCase().includes(item.sourceName.toLowerCase())
+      );
+    }
+    
     return item ? item.sceneItemId : null;
   } catch (error) {
     logError(`[OBS] Failed to get source ID for ${sourceName}:`, error.message);
@@ -427,10 +571,10 @@ async function createStreamerScene(streamerName, m3u8Url, hardwareDecoding = fal
     const sceneName = `Stream_${streamerName}`;
     
     const scenes = await obs.call('GetSceneList');
-    const sceneExists = scenes.scenes.some(scene => scene.sceneName === sceneName);
+    const existingScene = findSceneByStreamerName(scenes.scenes, streamerName);
     
-    if (sceneExists) {
-      logDebug(`[OBS] 🎬 Scene already exists: ${sceneName}`);
+    if (existingScene) {
+      logDebug(`[OBS] 🎬 Scene already exists: ${existingScene.sceneName}`);
       await applyHwDecodingPreference(streamerName);
       return true;
     }
@@ -558,38 +702,40 @@ async function deleteStreamerScene(streamerName) {
     
     // Vérifier si la scène existe
     const scenes = await obs.call('GetSceneList');
-    const sceneExists = scenes.scenes.some(scene => scene.sceneName === sceneName);
+    const existingScene = findSceneByStreamerName(scenes.scenes, streamerName);
     
-    if (!sceneExists) {
+    if (!existingScene) {
       logDebug(`[OBS] 🎬 Scene doesn't exist: ${sceneName}`);
       return true;
     }
 
+    const actualSceneName = existingScene.sceneName;
+
     // Si c'est la scène actuelle, basculer vers une autre scène
     const currentScene = await getCurrentOBSScene();
-    if (currentScene === sceneName) {
+    if (currentScene === actualSceneName) {
       // Trouver une autre scène vers laquelle basculer
-      const otherScenes = scenes.scenes.filter(scene => scene.sceneName !== sceneName);
+      const otherScenes = scenes.scenes.filter(scene => scene.sceneName !== actualSceneName);
       if (otherScenes.length > 0) {
         const targetScene = otherScenes[0].sceneName;
-        logInfo(`[OBS] 🔄 Switching from ${sceneName} to ${targetScene} before deletion`);
+        logInfo(`[OBS] 🔄 Switching from ${actualSceneName} to ${targetScene} before deletion`);
         await obs.call('SetCurrentProgramScene', { sceneName: targetScene });
         // Attendre un peu pour que le changement soit effectif
         await new Promise(resolve => setTimeout(resolve, 500));
       } else {
-        logWarn(`[OBS] ⚠️ Cannot delete scene ${sceneName}: it's the only scene and currently active`);
+        logWarn(`[OBS] ⚠️ Cannot delete scene ${actualSceneName}: it's the only scene and currently active`);
         return false;
       }
     }
 
     // Vérification supplémentaire : s'assurer qu'il restera au moins une scène après suppression
     if (scenes.scenes.length <= 1) {
-      logWarn(`[OBS] ⚠️ Cannot delete scene ${sceneName}: it's the only scene in OBS`);
+      logWarn(`[OBS] ⚠️ Cannot delete scene ${actualSceneName}: it's the only scene in OBS`);
       return false;
     }
 
-    logInfo(`[OBS] 🗑️ Deleting scene: ${sceneName}`);
-    await obs.call('RemoveScene', { sceneName });
+    logInfo(`[OBS] 🗑️ Deleting scene: ${actualSceneName}`);
+    await obs.call('RemoveScene', { sceneName: actualSceneName });
     
     logInfo(`[OBS] ✅ Scene deleted successfully: ${sceneName}`);
     return true;
@@ -644,21 +790,25 @@ async function toggleHardwareDecoding(streamerName, enabled) {
       // Chercher la vraie source dans la scène
       const sceneName = `Stream_${streamerName}`;
       try {
-        const sceneItems = await obs.call('GetSceneItemList', { sceneName });
-        const mediaItem = sceneItems.sceneItems.find(item => 
-          item.sourceName.includes(streamerName) || 
-          item.sourceName.includes('Media_') ||
-          item.inputKind === 'ffmpeg_source'
-        );
+        const scenes = await obs.call('GetSceneList');
+        const existingScene = findSceneByStreamerName(scenes.scenes, streamerName);
+        
+        if (!existingScene) {
+          logError(`[OBS] Scene for ${streamerName} not found`);
+          return false;
+        }
+        
+        const sceneItems = await obs.call('GetSceneItemList', { sceneName: existingScene.sceneName });
+        const mediaItem = findSourceByStreamerName(sceneItems.sceneItems, streamerName, 'Media');
         
         if (mediaItem) {
           realSourceName = mediaItem.sourceName;
         } else {
-          logError(`[OBS] No media source found in scene ${sceneName} for ${streamerName}`);
+          logError(`[OBS] No media source found in scene ${existingScene.sceneName} for ${streamerName}`);
           return false;
         }
       } catch (sceneError) {
-        logError(`[OBS] Scene ${sceneName} not found for ${streamerName}: ${sceneError.message}`);
+        logError(`[OBS] Scene for ${streamerName} not found: ${sceneError.message}`);
         return false;
       }
     }
@@ -701,14 +851,17 @@ async function getHardwareDecodingStatus(streamerName) {
       return settings.inputSettings.hw_decode || false;
     } catch (sourceError) {
       // La source n'existe pas, chercher dans toutes les scènes
-      const sceneName = `Stream_${streamerName}`;
       try {
-        const sceneItems = await obs.call('GetSceneItemList', { sceneName });
-        const mediaItem = sceneItems.sceneItems.find(item => 
-          item.sourceName.includes(streamerName) || 
-          item.sourceName.includes('Media_') ||
-          item.inputKind === 'ffmpeg_source'
-        );
+        const scenes = await obs.call('GetSceneList');
+        const existingScene = findSceneByStreamerName(scenes.scenes, streamerName);
+        
+        if (!existingScene) {
+          logDebug(`[OBS] Scene for ${streamerName} not found`);
+          return false;
+        }
+        
+        const sceneItems = await obs.call('GetSceneItemList', { sceneName: existingScene.sceneName });
+        const mediaItem = findSourceByStreamerName(sceneItems.sceneItems, streamerName, 'Media');
         
         if (mediaItem) {
           // Utiliser le vrai nom de la source
@@ -718,12 +871,12 @@ async function getHardwareDecodingStatus(streamerName) {
           });
           return settings.inputSettings.hw_decode || false;
         } else {
-          logDebug(`[OBS] No media source found in scene ${sceneName} for ${streamerName}`);
+          logDebug(`[OBS] No media source found in scene ${existingScene.sceneName} for ${streamerName}`);
           return false;
         }
       } catch (sceneError) {
         // Scene doesn't exist - this is normal after deletion, don't log as error
-        logDebug(`[OBS] Scene ${sceneName} not available for ${streamerName} (possibly deleted)`);
+        logDebug(`[OBS] Scene for ${streamerName} not available (possibly deleted)`);
         return false;
       }
     }
@@ -751,7 +904,16 @@ async function toggleChatDisplay(stream, enabled) {
   }
 
   try {
-    const sceneName = `Stream_${stream.name}`;
+    // Trouver la vraie scène pour ce streamer
+    const scenes = await obs.call('GetSceneList');
+    const existingScene = findSceneByStreamerName(scenes.scenes, stream.name);
+    
+    if (!existingScene) {
+      logError(`[OBS] Scene for ${stream.name} not found`);
+      return false;
+    }
+    
+    const sceneName = existingScene.sceneName;
     const mediaSrcName = `Media_${stream.name}`;
     const chatSrcName = `Chat_${stream.name}`;
     
@@ -1433,9 +1595,41 @@ async function resizeMediaForChat(sceneName, mediaSourceName, withChat) {
 async function getSceneItemId(sceneName, sourceName) {
   try {
     const sceneItems = await obs.call('GetSceneItemList', { sceneName });
-    const item = sceneItems.sceneItems.find(item => item.sourceName === sourceName);
+    
+    // D'abord essayer une correspondance exacte
+    let item = sceneItems.sceneItems.find(item => item.sourceName === sourceName);
+    
+    // Si pas trouvé, essayer une correspondance insensible à la casse
+    if (!item) {
+      item = sceneItems.sceneItems.find(item => 
+        item.sourceName.toLowerCase() === sourceName.toLowerCase()
+      );
+    }
+    
+    // Si toujours pas trouvé, essayer une correspondance partielle mais plus précise
+    if (!item) {
+      const sourceNameLower = sourceName.toLowerCase();
+      const baseSourceName = sourceName.replace(/^(Stream_|Media_|Chat_)/, '');
+      const sourceType = sourceName.match(/^(Stream_|Media_|Chat_)/)?.[0] || '';
+      
+      item = sceneItems.sceneItems.find(item => {
+        const itemNameLower = item.sourceName.toLowerCase();
+        
+        // Si on cherche spécifiquement un type (Media_, Chat_, etc.)
+        if (sourceType) {
+          // Correspondance avec le bon type et le bon nom de streamer
+          return itemNameLower.startsWith(sourceType.toLowerCase()) &&
+                 itemNameLower.includes(baseSourceName.toLowerCase());
+        }
+        
+        // Correspondance générale (fallback)
+        return itemNameLower.includes(baseSourceName.toLowerCase());
+      });
+    }
+    
     return item ? item.sceneItemId : null;
   } catch (error) {
+    logDebug(`[OBS] Failed to get scene item ID for ${sourceName} in ${sceneName}: ${error.message}`);
     return null;
   }
 }
@@ -1455,19 +1649,47 @@ async function getChatDisplayStatus(streamerName) {
   }
 
   try {
-    const sceneName = `Stream_${streamerName}`;
+    // Chercher la vraie scène pour ce streamer
+    const scenes = await obs.call('GetSceneList');
+    const existingScene = findSceneByStreamerName(scenes.scenes, streamerName);
+    
+    if (!existingScene) {
+      logDebug(`[OBS] No scene found for streamer ${streamerName}`);
+      return false;
+    }
+    
+    const sceneName = existingScene.sceneName;
     const chatSourceName = `Chat_${streamerName}`;
     
-    // Vérifier si la source chat existe et est visible
-    const sceneItemId = await getSceneItemId(sceneName, chatSourceName);
-    if (sceneItemId === null) return false;
-
+    logDebug(`[OBS] Checking chat status for ${streamerName} in scene ${sceneName}, looking for source ${chatSourceName}`);
+    
+    // Lister toutes les sources de la scène pour diagnostic
+    const sceneItems = await obs.call('GetSceneItemList', { sceneName });
+    logDebug(`[OBS] Sources in scene ${sceneName}:`, sceneItems.sceneItems.map(item => item.sourceName));
+    
+    // Vérifier si la source chat existe
+    const chatItem = sceneItems.sceneItems.find(item => 
+      item.sourceName === chatSourceName || 
+      item.sourceName.toLowerCase() === chatSourceName.toLowerCase()
+    );
+    
+    if (!chatItem) {
+      logDebug(`[OBS] No chat source found for ${streamerName} (expected: ${chatSourceName})`);
+      return false;
+    }
+    
+    logDebug(`[OBS] Found chat source: ${chatItem.sourceName}, checking if enabled...`);
+    
+    // Vérifier si la source chat est visible/activée
     const itemInfo = await obs.call('GetSceneItemEnabled', {
       sceneName: sceneName,
-      sceneItemId: sceneItemId
+      sceneItemId: chatItem.sceneItemId
     });
 
-    return itemInfo.sceneItemEnabled || false;
+    const isEnabled = itemInfo.sceneItemEnabled || false;
+    logDebug(`[OBS] Chat source ${chatItem.sourceName} is ${isEnabled ? 'enabled' : 'disabled'}`);
+    
+    return isEnabled;
   } catch (error) {
     // Only log this occasionally to avoid spam  
     if (!getChatDisplayStatus.lastErrorLog || Date.now() - getChatDisplayStatus.lastErrorLog > 30000) {
@@ -3140,6 +3362,30 @@ async function handleApi(req, res) {
       return sendJson(res, 500, { 
         success: false, 
         error: 'Failed to diagnose OBS collections' 
+      });
+    }
+  }
+
+  // GET /api/obs/diagnose-scenes -> diagnostic des scènes pour un streamer
+  if (req.method === 'GET' && pathname === '/api/obs/diagnose-scenes') {
+    const streamerName = parsedUrl.searchParams.get('streamer');
+    if (!streamerName) {
+      return sendJson(res, 400, { success: false, error: 'Missing streamer parameter' });
+    }
+    
+    try {
+      logInfo(`[API] OBS scenes diagnosis requested for: ${streamerName}`);
+      await diagnoseOBSScenes(streamerName);
+      
+      return sendJson(res, 200, { 
+        success: true, 
+        message: `Diagnosis completed for ${streamerName} - check server logs for detailed results`
+      });
+    } catch (error) {
+      logError(`[OBS] Failed to diagnose scenes for ${streamerName}:`, error.message);
+      return sendJson(res, 500, { 
+        success: false, 
+        error: `Failed to diagnose scenes for ${streamerName}` 
       });
     }
   }
