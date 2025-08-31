@@ -1,0 +1,120 @@
+:root {
+  --primary-green: #22C55E;
+  --primary-green-hover: #16A34A;
+  --primary-green-dark: #15803D;
+  --zevent-green: #00FFB2;
+  --zevent-green-glow: rgba(0, 255, 178, 0.3);
+  --primary-blue: #3B82F6;
+  --primary-blue-dark: #2563EB;
+  --danger-red: #EF4444;
+  --danger-red-hover: #DC2626;
+  --dark-bg: #0A0A0A;
+  --card-bg: #1A1A1A;
+  --bg-secondary: #151515;
+  --hover-bg: #2A2A2A;
+  --border-color: #2A2A2A;
+  --text-primary: #FFFFFF;
+  --text-secondary: #D1D5DB;
+  --text-muted: #9CA3AF;
+  --success-green: #22C55E;
+  --warning-orange: #F59E0B;
+  --warning-orange-hover: #D97706;
+  --accent-blue: #3B82F6;
+  --accent-blue-hover: #2563EB;
+  --gradient-primary: linear-gradient(135deg, var(--primary-green) 0%, var(--primary-green-dark) 100%);
+  --gradient-zevent: linear-gradient(135deg, var(--zevent-green) 0%, rgba(0, 255, 178, 0.8) 100%);
+  --gradient-danger: linear-gradient(135deg, var(--danger-red) 0%, var(--danger-red-hover) 100%);
+  --gradient-warning: linear-gradient(135deg, var(--warning-orange) 0%, var(--warning-orange-hover) 100%);
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background: var(--dark-bg);
+  color: var(--text-primary);
+  line-height: 1.6;
+  min-height: 100vh;
+  scroll-behavior: smooth;
+}
+
+#app {
+  min-height: 100vh;
+  background: var(--dark-bg);
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--zevent-green);
+  border-radius: 3px;
+  opacity: 0.6;
+  transition: all 0.2s ease;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--zevent-green);
+  opacity: 1;
+  box-shadow: 0 0 8px var(--zevent-green-glow);
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--zevent-green) transparent;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
+@keyframes slideInFromRight {
+  from { opacity: 0; transform: translateX(20px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+.fade-in {
+  animation: fadeIn 0.3s ease-out;
+}
+
+.slide-in {
+  animation: slideInFromRight 0.4s ease-out;
+}
+
+.pulse {
+  animation: pulse 2s infinite;
+}
+
+// Responsive breakpoints
+@mixin mobile {
+  @media (max-width: 768px) {
+    @content;
+  }
+}
+
+@mixin tablet {
+  @media (max-width: 1024px) and (min-width: 769px) {
+    @content;
+  }
+}
+
+@mixin desktop {
+  @media (min-width: 1025px) {
+    @content;
+  }
+}

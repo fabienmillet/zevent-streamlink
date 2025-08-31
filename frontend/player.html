@@ -1,0 +1,813 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lecteur de flux - ZEvent Streamlink</title>
+    <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.js"></script>
+    <script src="https://embed.twitch.tv/embed/v1.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background: linear-gradient(135deg, #0a0a0a, #1a1a1a);
+            color: #ffffff;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .header {
+            padding: 0.75rem 1rem;
+            background: rgba(0, 0, 0, 0.5);
+            border-bottom: 1px solid #333;
+            backdrop-filter: blur(10px);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            height: 60px;
+            flex-shrink: 0;
+        }
+
+        .header-left {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+
+        .header h1 {
+            font-size: 1.8rem;
+            font-weight: 700;
+            color: #00ff88;
+            margin: 0;
+        }
+
+        .streamer-info {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+
+        .streamer-name {
+            font-size: 1.2rem;
+            font-weight: 600;
+            color: #fff;
+        }
+
+        .live-indicator {
+            background: #ff4444;
+            color: white;
+            padding: 0.25rem 0.5rem;
+            border-radius: 0.25rem;
+            font-size: 0.8rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            animation: pulse-live 2s infinite;
+        }
+
+        @keyframes pulse-live {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.7; }
+        }
+
+        .player-container {
+            flex: 1;
+            display: flex;
+            gap: 0.5rem;
+            padding: 0.5rem;
+            max-width: 100%;
+            height: calc(100vh - 60px);
+        }
+
+        .video-section {
+            flex: 2;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 0;
+        }
+
+        .chat-section {
+            flex: 1;
+            min-width: 320px;
+            max-width: 450px;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .chat-header {
+            background: rgba(0, 0, 0, 0.5);
+            padding: 0.75rem;
+            border-radius: 0.5rem 0.5rem 0 0;
+            border-bottom: 1px solid #333;
+            flex-shrink: 0;
+        }
+
+        .chat-header h3 {
+            color: #00ff88;
+            margin: 0;
+            font-size: 1.1rem;
+            font-weight: 600;
+        }
+
+        .chat-iframe {
+            flex: 1;
+            width: 100%;
+            height: 100%;
+            border: none;
+            border-radius: 0 0 0.5rem 0.5rem;
+            background: #000;
+        }
+
+        .chat-fallback {
+            flex: 1;
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 0 0 0.5rem 0.5rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 400px;
+            padding: 2rem;
+        }
+
+        .chat-info {
+            text-align: center;
+            color: #ccc;
+        }
+
+        .chat-info p {
+            margin-bottom: 1.5rem;
+            line-height: 1.5;
+        }
+
+        .chat-tip {
+            font-size: 0.9rem;
+            opacity: 0.8;
+            margin-top: 1rem !important;
+        }
+
+        .chat-btn {
+            background: #9146ff;
+            color: white;
+            border: none;
+            padding: 1rem 2rem;
+            border-radius: 0.5rem;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            margin: 0 auto;
+        }
+
+        .chat-btn:hover {
+            background: #7928d9;
+            transform: translateY(-2px);
+        }
+
+        .chat-btn:active {
+            transform: translateY(0);
+        }
+
+        .video-wrapper {
+            width: 100%;
+            height: 100%;
+            max-width: none;
+            max-height: 100%;
+            aspect-ratio: 16/9;
+            background: #000;
+            border-radius: 0.5rem;
+            overflow: hidden;
+            position: relative;
+            transition: cursor 0.3s ease;
+        }
+
+        .video-wrapper.hide-cursor {
+            cursor: none;
+        }
+
+        video {
+            width: 100%;
+            height: 100%;
+            outline: none;
+        }
+
+        .loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: #00ff88;
+            font-size: 1.2rem;
+            z-index: 10;
+        }
+
+        .error {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: #ff4444;
+            text-align: center;
+            z-index: 10;
+            padding: 2rem;
+        }
+
+        .error h2 {
+            margin-bottom: 1rem;
+            font-size: 1.5rem;
+        }
+
+        .error p {
+            margin-bottom: 0.5rem;
+            opacity: 0.8;
+        }
+
+        .controls {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: linear-gradient(transparent, rgba(0, 0, 0, 0.8));
+            padding: 1rem;
+            opacity: 0;
+            transition: opacity 0.3s ease;
+            z-index: 1000;
+        }
+
+        .video-wrapper.show-controls .controls {
+            opacity: 1;
+        }
+
+        /* Contrôles en plein écran */
+        .video-wrapper:fullscreen .controls,
+        .video-wrapper:-webkit-full-screen .controls,
+        .video-wrapper:-moz-full-screen .controls {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            z-index: 2147483647;
+        }
+
+        .video-wrapper:fullscreen.show-controls .controls,
+        .video-wrapper:-webkit-full-screen.show-controls .controls,
+        .video-wrapper:-moz-full-screen.show-controls .controls {
+            opacity: 1;
+        }
+
+        .control-buttons {
+            display: flex;
+            gap: 1rem;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .control-group {
+            display: flex;
+            gap: 0.5rem;
+            align-items: center;
+        }
+
+        .volume-control {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .volume-slider {
+            width: 80px;
+            height: 4px;
+            background: rgba(255, 255, 255, 0.3);
+            border-radius: 2px;
+            outline: none;
+            cursor: pointer;
+        }
+
+        .time-info {
+            color: #ccc;
+            font-size: 0.9rem;
+            min-width: 80px;
+        }
+
+        .control-btn {
+            background: rgba(255, 255, 255, 0.2);
+            border: none;
+            color: white;
+            padding: 0.5rem;
+            border-radius: 0.3rem;
+            cursor: pointer;
+            transition: background 0.3s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-width: 40px;
+            height: 40px;
+        }
+
+        .control-btn:hover {
+            background: rgba(255, 255, 255, 0.3);
+        }
+
+        .back-link {
+            position: fixed;
+            top: 1rem;
+            right: 1rem;
+            background: rgba(0, 255, 136, 0.2);
+            color: #00ff88;
+            text-decoration: none;
+            padding: 0.5rem 1rem;
+            border-radius: 0.3rem;
+            border: 1px solid #00ff88;
+            transition: all 0.3s ease;
+            z-index: 100;
+        }
+
+        .back-link:hover {
+            background: #00ff88;
+            color: #000;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .spinner {
+            border: 2px solid #333;
+            border-top: 2px solid #00ff88;
+            border-radius: 50%;
+            width: 24px;
+            height: 24px;
+            animation: spin 1s linear infinite;
+            margin-right: 0.5rem;
+        }
+
+        /* Responsive design */
+        @media (max-width: 480px) {
+            .player-container {
+                flex-direction: column;
+                padding: 0.25rem;
+                height: calc(100vh - 60px);
+            }
+            
+            .chat-section {
+                max-width: none;
+                min-width: auto;
+                min-height: 200px;
+                height: 40%;
+            }
+            
+            .video-section {
+                height: 60%;
+            }
+            
+            .chat-iframe {
+                width: 100%;
+                height: 100%;
+                min-height: 300px;
+            }
+        }
+    </style>
+</head>
+<body>
+
+    <div class="header">
+        <div class="header-left">
+            <h1>Lecteur de flux</h1>
+            <div class="streamer-info">
+                <span class="streamer-name" id="streamerName">Chargement...</span>
+                <span class="live-indicator">LIVE</span>
+            </div>
+        </div>
+        <a href="/" class="back-link" style="position: static; background: transparent; border: 1px solid #00ff88; color: #00ff88;">← Retour</a>
+    </div>
+
+    <div class="player-container">
+        <div class="video-section">
+            <div class="video-wrapper">
+                <div class="loading" id="loading">
+                    <div style="display: flex; align-items: center;">
+                        <div class="spinner"></div>
+                        Chargement du flux...
+                    </div>
+                </div>
+                
+                <div class="error" id="error" style="display: none;">
+                    <h2>Erreur de lecture</h2>
+                    <p>Impossible de charger le flux M3U8</p>
+                    <p>Le streamer n'est peut-être pas en live ou le lien a expiré</p>
+                </div>
+
+                <video id="player" style="display: none;">
+                    Votre navigateur ne supporte pas la lecture vidéo HTML5.
+                </video>
+
+                <div class="controls">
+                    <div class="control-buttons">
+                        <div class="control-group">
+                            <button class="control-btn" onclick="togglePlay()" id="playBtn">
+                                <i data-lucide="play"></i>
+                            </button>
+                            <div class="volume-control">
+                                <button class="control-btn" onclick="toggleMute()" id="muteBtn">
+                                    <i data-lucide="volume-2"></i>
+                                </button>
+                                <input type="range" class="volume-slider" id="volumeSlider" min="0" max="100" value="100" onchange="setVolume(this.value)">
+                            </div>
+                        </div>
+                        <div class="time-info" id="timeInfo">LIVE</div>
+                        <div class="control-group">
+                            <button class="control-btn" onclick="toggleFullscreen()">
+                                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"></path>
+                                </svg>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="chat-section">
+            <div class="chat-header">
+                <h3>💬 Chat en direct</h3>
+            </div>
+            <div id="chat-container" class="chat-iframe">
+                <!-- Le chat sera injecté ici -->
+            </div>
+            <div class="chat-fallback" id="chatFallback" style="display: none;">
+                <div class="chat-info">
+                    <p>Le chat ne peut pas être chargé automatiquement.</p>
+                    <button class="chat-btn" onclick="openTwitchChat()">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
+                            <polyline points="15,3 21,3 21,9"></polyline>
+                            <line x1="10" y1="14" x2="21" y2="3"></line>
+                        </svg>
+                        Ouvrir le chat dans un nouvel onglet
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+    <script>
+        // Récupérer l'URL M3U8 depuis les paramètres URL
+        const urlParams = new URLSearchParams(window.location.search);
+        const m3u8Url = urlParams.get('url');
+        const streamerName = urlParams.get('name') || 'Streamer inconnu';
+
+        // Mettre à jour le nom du streamer
+        document.getElementById('streamerName').textContent = streamerName;
+
+        // Essayer de charger le chat avec l'API Twitch Embed
+        function loadTwitchChat() {
+            if (streamerName && streamerName !== 'Streamer inconnu') {
+                const cleanStreamerName = streamerName.toLowerCase().replace(/[^a-z0-9_]/g, '');
+                
+                // Utiliser directement la méthode iframe pour éviter les problèmes avec l'embed
+                tryIframeChat(cleanStreamerName);
+                
+                /*
+                try {
+                    // Méthode 1: Twitch Embed API (chat only)
+                    new Twitch.Embed("chat-container", {
+                        width: "100%",
+                        height: "100%",
+                        channel: cleanStreamerName,
+                        layout: "chat",
+                        theme: "dark",
+                        allowfullscreen: false,
+                        muted: true
+                    });
+                } catch (error) {
+                    console.log('Twitch Embed API failed, trying iframe method:', error);
+                    tryIframeChat(cleanStreamerName);
+                }
+                */
+            }
+        }
+
+        // Méthode 2: iframe direct (peut être bloqué)
+        function tryIframeChat(cleanStreamerName) {
+            const chatContainer = document.getElementById('chat-container');
+            chatContainer.innerHTML = `
+                <iframe 
+                    src="https://www.twitch.tv/embed/${cleanStreamerName}/chat?parent=${window.location.hostname}&darkpopout"
+                    width="100%" 
+                    height="100%" 
+                    frameborder="0"
+                    title="Chat Twitch">
+                </iframe>
+            `;
+            
+            // Si l'iframe ne charge pas après 5 secondes, afficher le fallback
+            setTimeout(() => {
+                const iframe = chatContainer.querySelector('iframe');
+                if (iframe) {
+                    iframe.onerror = () => showChatFallback();
+                    // Test si l'iframe a chargé du contenu
+                    try {
+                        if (!iframe.contentDocument && !iframe.contentWindow) {
+                            showChatFallback();
+                        }
+                    } catch (e) {
+                        // Erreur de cross-origin = iframe bloquée
+                        showChatFallback();
+                    }
+                }
+            }, 5000);
+        }
+
+        // Afficher le fallback si les autres méthodes échouent
+        function showChatFallback() {
+            document.getElementById('chat-container').style.display = 'none';
+            document.getElementById('chatFallback').style.display = 'flex';
+        }
+
+        // Fonction pour ouvrir le chat Twitch
+        function openTwitchChat() {
+            if (streamerName && streamerName !== 'Streamer inconnu') {
+                const cleanStreamerName = streamerName.toLowerCase().replace(/[^a-z0-9_]/g, '');
+                const chatUrl = `https://www.twitch.tv/popout/${cleanStreamerName}/chat?popout=`;
+                window.open(chatUrl, 'twitchChat', 'width=400,height=600,scrollbars=yes,resizable=yes');
+            }
+        }
+
+        // Charger le chat au démarrage
+        loadTwitchChat();
+
+        const video = document.getElementById('player');
+        const loading = document.getElementById('loading');
+        const error = document.getElementById('error');
+        const videoWrapper = document.querySelector('.video-wrapper');
+
+        // Gestion de l'affichage des contrôles
+        let controlsTimeout;
+        let lastMouseX = 0;
+        let lastMouseY = 0;
+        
+        function showControls() {
+            videoWrapper.classList.add('show-controls');
+            videoWrapper.classList.remove('hide-cursor');
+            clearTimeout(controlsTimeout);
+            
+            // Masquer après 3 secondes d'inactivité
+            controlsTimeout = setTimeout(() => {
+                hideControls();
+            }, 3000);
+        }
+        
+        function hideControls(force = false) {
+            if (force || !video.paused) { // Masquer si forcé ou si la vidéo joue
+                videoWrapper.classList.remove('show-controls');
+                videoWrapper.classList.add('hide-cursor');
+            }
+        }
+
+        // Événements pour gérer l'affichage des contrôles
+        videoWrapper.addEventListener('mousemove', (e) => {
+            // Ne déclencher que s'il y a eu un mouvement significatif (plus de 5px)
+            const deltaX = Math.abs(e.clientX - lastMouseX);
+            const deltaY = Math.abs(e.clientY - lastMouseY);
+            
+            if (deltaX > 5 || deltaY > 5) {
+                lastMouseX = e.clientX;
+                lastMouseY = e.clientY;
+                showControls();
+            }
+        });
+        videoWrapper.addEventListener('mouseenter', showControls);
+        videoWrapper.addEventListener('mouseleave', () => {
+            clearTimeout(controlsTimeout);
+            videoWrapper.classList.remove('hide-cursor'); // Montrer le curseur quand on quitte
+            hideControls(true); // Forcer le masquage quand on quitte la zone
+        });
+        videoWrapper.addEventListener('click', showControls);
+        video.addEventListener('play', () => {
+            setTimeout(() => hideControls(), 3000);
+        });
+        video.addEventListener('pause', () => {
+            showControls();
+            videoWrapper.classList.remove('hide-cursor'); // Toujours montrer le curseur en pause
+        });
+
+        if (!m3u8Url) {
+            showError('Aucune URL de flux fournie');
+        } else {
+            loadStream(m3u8Url);
+        }
+
+        function loadStream(url) {
+            if (Hls.isSupported()) {
+                const hls = new Hls({
+                    enableWorker: true,
+                    lowLatencyMode: true,
+                    backBufferLength: 90
+                });
+                
+                hls.loadSource(url);
+                hls.attachMedia(video);
+                
+                hls.on(Hls.Events.MANIFEST_PARSED, function () {
+                    loading.style.display = 'none';
+                    video.style.display = 'block';
+                    // Autostart avec gestion d'erreur
+                    video.play().then(() => {
+                        // Succès de l'autoplay, mettre à jour l'icône
+                        updatePlayIcon();
+                    }).catch(e => {
+                        console.log('Lecture automatique bloquée:', e);
+                        // Si autoplay bloqué, afficher l'icône play
+                        updatePlayIcon();
+                    });
+                });
+
+                hls.on(Hls.Events.ERROR, function (event, data) {
+                    console.error('Erreur HLS:', data);
+                    if (data.fatal) {
+                        showError(`Erreur fatale: ${data.type} - ${data.details}`);
+                    }
+                });
+
+                // Détection de la fin de flux
+                video.addEventListener('ended', () => {
+                    showError('Le flux s\'est terminé');
+                });
+
+                video.addEventListener('error', () => {
+                    showError('Erreur de lecture vidéo');
+                });
+
+            } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+                // Safari natif HLS
+                video.src = url;
+                loading.style.display = 'none';
+                video.style.display = 'block';
+                
+                video.addEventListener('loadedmetadata', () => {
+                    video.play().then(() => {
+                        updatePlayIcon();
+                    }).catch(e => {
+                        console.log('Lecture automatique bloquée:', e);
+                        updatePlayIcon();
+                    });
+                });
+
+                video.addEventListener('error', () => {
+                    showError('Erreur de lecture vidéo');
+                });
+
+                // Synchroniser l'icône avec les événements vidéo
+                video.addEventListener('play', updatePlayIcon);
+                video.addEventListener('pause', updatePlayIcon);
+            } else {
+                showError('Votre navigateur ne supporte pas la lecture HLS');
+            }
+        }
+
+        function showError(message) {
+            loading.style.display = 'none';
+            video.style.display = 'none';
+            error.style.display = 'block';
+            error.querySelector('p').textContent = message;
+        }
+
+        function updatePlayIcon() {
+            const playBtn = document.getElementById('playBtn');
+            
+            // Debug pour voir l'état
+            console.log('Updating play icon. Video paused:', video.paused);
+            
+            if (video.paused) {
+                // Icône Play SVG
+                playBtn.innerHTML = `
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <polygon points="5,3 19,12 5,21"></polygon>
+                    </svg>
+                `;
+                console.log('Set to play icon');
+            } else {
+                // Icône Pause SVG
+                playBtn.innerHTML = `
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <rect x="6" y="4" width="4" height="16"></rect>
+                        <rect x="14" y="4" width="4" height="16"></rect>
+                    </svg>
+                `;
+                console.log('Set to pause icon');
+            }
+        }
+
+        function togglePlay() {
+            if (video.paused) {
+                video.play().then(() => {
+                    console.log('Video started playing');
+                    updatePlayIcon();
+                }).catch(e => {
+                    console.error('Failed to play:', e);
+                    updatePlayIcon();
+                });
+            } else {
+                video.pause();
+                console.log('Video paused');
+                updatePlayIcon();
+            }
+        }
+
+        function toggleMute() {
+            const muteBtn = document.getElementById('muteBtn');
+            const icon = muteBtn.querySelector('i');
+            const volumeSlider = document.getElementById('volumeSlider');
+            video.muted = !video.muted;
+            icon.setAttribute('data-lucide', video.muted ? 'volume-x' : 'volume-2');
+            volumeSlider.style.opacity = video.muted ? '0.5' : '1';
+            lucide.createIcons();
+        }
+
+        function setVolume(value) {
+            video.volume = value / 100;
+            const muteBtn = document.getElementById('muteBtn');
+            const icon = muteBtn.querySelector('i');
+            if (value == 0) {
+                icon.setAttribute('data-lucide', 'volume-x');
+            } else if (value < 50) {
+                icon.setAttribute('data-lucide', 'volume-1');
+            } else {
+                icon.setAttribute('data-lucide', 'volume-2');
+            }
+            video.muted = false;
+            lucide.createIcons();
+        }
+
+        function toggleFullscreen() {
+            const fullscreenBtn = document.querySelector('[onclick="toggleFullscreen()"]');
+            const icon = fullscreenBtn.querySelector('svg');
+            
+            if (document.fullscreenElement) {
+                document.exitFullscreen();
+                // Icône maximize SVG
+                fullscreenBtn.innerHTML = `
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"></path>
+                    </svg>
+                `;
+            } else {
+                videoWrapper.requestFullscreen();
+                // Icône minimize SVG
+                fullscreenBtn.innerHTML = `
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M8 3v3a2 2 0 0 1-2 2H3m18 0h-3a2 2 0 0 1-2-2V3m0 18v-3a2 2 0 0 1 2-2h3M3 16h3a2 2 0 0 1 2 2v3"></path>
+                    </svg>
+                `;
+            }
+        }
+
+        // Contrôles clavier
+        document.addEventListener('keydown', (e) => {
+            switch(e.code) {
+                case 'Space':
+                    e.preventDefault();
+                    togglePlay();
+                    break;
+                case 'KeyM':
+                    toggleMute();
+                    break;
+                case 'KeyF':
+                    toggleFullscreen();
+                    break;
+                case 'ArrowUp':
+                    e.preventDefault();
+                    const currentVol = Math.round(video.volume * 100);
+                    const newVol = Math.min(100, currentVol + 10);
+                    setVolume(newVol);
+                    document.getElementById('volumeSlider').value = newVol;
+                    break;
+                case 'ArrowDown':
+                    e.preventDefault();
+                    const currentVolDown = Math.round(video.volume * 100);
+                    const newVolDown = Math.max(0, currentVolDown - 10);
+                    setVolume(newVolDown);
+                    document.getElementById('volumeSlider').value = newVolDown;
+                    break;
+            }
+        });
+
+        // Initialiser les icônes Lucide
+        lucide.createIcons();
+        
+        // Initialiser l'état du bouton play
+        setTimeout(() => {
+            updatePlayIcon();
+        }, 100);
+    </script>
+</body>
+</html>
