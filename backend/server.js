@@ -759,6 +759,146 @@ async function updateMediaSourceBounds(streamerName) {
   }
 }
 
+// Function to create ZEvent background image source
+async function createBackgroundImageSource(sceneName, streamerName) {
+  if (!isObsConnected) {
+    logWarn('[OBS] ⚠️ Cannot create background image: not connected to OBS');
+    return false;
+  }
+
+  try {
+    const backgroundSourceName = `Background_ZEvent_${streamerName}`;
+    const imageUrl = 'https://cdn.zipname.fr/zevent_background.jpg';
+    
+    logInfo(`[OBS] 🖼️ Adding ZEvent background image: ${backgroundSourceName}`);
+    
+    // Créer la source image
+    await obs.call('CreateInput', {
+      sceneName,
+      inputName: backgroundSourceName,
+      inputKind: 'image_source',
+      inputSettings: {
+        file: imageUrl,
+        unload: false,
+        linear_alpha: false
+      }
+    });
+    
+    // Attendre un peu pour que la source soit créée
+    await new Promise(resolve => setTimeout(resolve, 500));
+    
+    // Récupérer les informations de la scène et du canvas
+    const sceneItems = await obs.call('GetSceneItemList', { sceneName });
+    const backgroundItem = sceneItems.sceneItems.find(item => item.sourceName === backgroundSourceName);
+    
+    if (backgroundItem) {
+      // Récupérer la résolution du canvas OBS
+      const videoSettings = await obs.call('GetVideoSettings');
+      const canvasWidth = videoSettings.baseWidth;
+      const canvasHeight = videoSettings.baseHeight;
+      
+      logInfo(`[OBS] 📐 Configuring background image for canvas: ${canvasWidth}x${canvasHeight}`);
+      
+      // Configurer le transform pour adapter l'image (1920x1080) au canvas
+      await obs.call('SetSceneItemTransform', {
+        sceneName,
+        sceneItemId: backgroundItem.sceneItemId,
+        sceneItemTransform: {
+          positionX: 0,
+          positionY: 0,
+          scaleX: canvasWidth / 1920, // Échelle pour s'adapter au canvas
+          scaleY: canvasHeight / 1080,
+          cropLeft: 0,
+          cropTop: 0,
+          cropRight: 0,
+          cropBottom: 0,
+          boundsType: 'OBS_BOUNDS_STRETCH', // Étirer pour remplir le canvas
+          boundsAlignment: 5, // Centré
+          boundsWidth: canvasWidth,
+          boundsHeight: canvasHeight
+        }
+      });
+      
+      // S'assurer que l'image de fond est en arrière-plan (index 0)
+      await obs.call('SetSceneItemIndex', {
+        sceneName,
+        sceneItemId: backgroundItem.sceneItemId,
+        sceneItemIndex: 0
+      });
+      
+      // Activer la source
+      await obs.call('SetSceneItemEnabled', {
+        sceneName,
+        sceneItemId: backgroundItem.sceneItemId,
+        sceneItemEnabled: true
+      });
+      
+      logInfo(`[OBS] ✅ ZEvent background image configured successfully: ${backgroundSourceName}`);
+      return true;
+    } else {
+      logError(`[OBS] Failed to find background image source after creation: ${backgroundSourceName}`);
+      return false;
+    }
+    
+  } catch (error) {
+    logError(`[OBS] ❌ Failed to create background image for ${streamerName}: ${error.message}`);
+    return false;
+  }
+}
+
+// Function to add background image to existing scenes
+async function addBackgroundToExistingScenes() {
+  if (!isObsConnected) {
+    logWarn('[OBS] ⚠️ Cannot add background images: not connected to OBS');
+    return false;
+  }
+
+  try {
+    const scenes = await obs.call('GetSceneList');
+    const streamerScenes = scenes.scenes.filter(scene => 
+      scene.sceneName.startsWith('Stream_')
+    );
+
+    if (streamerScenes.length === 0) {
+      logInfo('[OBS] 📋 No streamer scenes found to add background images');
+      return true;
+    }
+
+    logInfo(`[OBS] 🖼️ Adding background images to ${streamerScenes.length} existing scenes...`);
+
+    for (const scene of streamerScenes) {
+      try {
+        // Extraire le nom du streamer du nom de la scène
+        const streamerName = scene.sceneName.replace('Stream_', '');
+        
+        // Vérifier si l'image de fond existe déjà
+        const sceneItems = await obs.call('GetSceneItemList', { sceneName: scene.sceneName });
+        const hasBackground = sceneItems.sceneItems.some(item => 
+          item.sourceName.startsWith('Background_ZEvent_')
+        );
+
+        if (!hasBackground) {
+          logInfo(`[OBS] 🖼️ Adding background to scene: ${scene.sceneName}`);
+          await createBackgroundImageSource(scene.sceneName, streamerName);
+          
+          // Petit délai pour éviter de surcharger OBS
+          await new Promise(resolve => setTimeout(resolve, 300));
+        } else {
+          logDebug(`[OBS] ✅ Background already exists for scene: ${scene.sceneName}`);
+        }
+      } catch (error) {
+        logError(`[OBS] ❌ Failed to add background to scene ${scene.sceneName}: ${error.message}`);
+      }
+    }
+
+    logInfo('[OBS] ✅ Finished adding background images to existing scenes');
+    return true;
+  } catch (error) {
+    logError(`[OBS] ❌ Failed to add background images to existing scenes: ${error.message}`);
+    return false;
+  }
+}
+
 async function createStreamerScene(streamerName, m3u8Url, hardwareDecoding = false) {
   if (!isObsConnected) {
     logWarn('[OBS] ⚠️ Cannot create scene: not connected to OBS');
@@ -793,6 +933,9 @@ async function createStreamerScene(streamerName, m3u8Url, hardwareDecoding = fal
     
     logInfo(`[OBS] 🎬 Creating scene: ${sceneName} (HW decoding: ${preferredHwDecoding})`);
     await obs.call('CreateScene', { sceneName });
+
+    // Ajouter l'image de fond ZEvent en premier (en arrière-plan)
+    await createBackgroundImageSource(sceneName, streamerName);
 
     const sourceName = `Media_${streamerName}`;
     logInfo(`[OBS] 📺 Adding media source: ${sourceName}`);
@@ -1193,7 +1336,7 @@ async function createChatSource(sceneName, chatSourceName, twitchUsername) {
           css: `
           /* CSS Variables pour personnalisation facile */
           :root {
-              --background-color: rgba(0,0,0,0);
+              --background-color: #18181b;
               --text-color: #FFFFFF;
               --username-color: #00ff88;
               --font-size: 14px;
@@ -3681,6 +3824,69 @@ async function handleApi(req, res) {
       return sendJson(res, 500, { 
         success: false, 
         error: `Failed to fix media bounds for ${streamerName}` 
+      });
+    }
+  }
+
+  /**
+   * @swagger
+   * /api/obs/add-backgrounds:
+   *   post:
+   *     tags:
+   *       - OBS
+   *     summary: Ajouter des images de fond ZEvent aux scènes existantes
+   *     description: Ajoute automatiquement l'image de fond ZEvent (1920x1080) à toutes les scènes de streamers existantes. L'image est redimensionnée pour s'adapter à la résolution du canvas OBS et placée en arrière-plan.
+   *     responses:
+   *       200:
+   *         description: Images de fond ajoutées avec succès
+   *         content:
+   *           application/json:
+   *             schema:
+   *               type: object
+   *               properties:
+   *                 success:
+   *                   type: boolean
+   *                   example: true
+   *                 message:
+   *                   type: string
+   *                   example: "Background images added to existing scenes"
+   *       500:
+   *         description: Erreur lors de l'ajout des images de fond
+   *         content:
+   *           application/json:
+   *             schema:
+   *               type: object
+   *               properties:
+   *                 success:
+   *                   type: boolean
+   *                   example: false
+   *                 error:
+   *                   type: string
+   *                   example: "Failed to add background images"
+   */
+
+  // POST /api/obs/add-backgrounds -> ajouter des images de fond aux scènes existantes
+  if (req.method === 'POST' && pathname === '/api/obs/add-backgrounds') {
+    try {
+      logInfo('[API] Adding background images to existing scenes requested');
+      const success = await addBackgroundToExistingScenes();
+      
+      if (success) {
+        return sendJson(res, 200, { 
+          success: true, 
+          message: 'Background images added to existing scenes' 
+        });
+      } else {
+        return sendJson(res, 500, { 
+          success: false, 
+          error: 'Failed to add background images' 
+        });
+      }
+    } catch (error) {
+      logError('[OBS] Failed to add background images:', error.message);
+      return sendJson(res, 500, { 
+        success: false, 
+        error: 'Failed to add background images' 
       });
     }
   }
