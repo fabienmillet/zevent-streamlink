@@ -561,6 +561,130 @@ async function diagnoseObsCollections() {
   }
 }
 
+// Function to diagnose OBS scenes for a specific streamer
+async function diagnoseOBSScenes(streamerName) {
+  if (!isObsConnected) {
+    logWarn(`[OBS] ⚠️ Cannot diagnose scenes for ${streamerName}: not connected to OBS`);
+    return false;
+  }
+
+  try {
+    logInfo(`[OBS] 🔍 Diagnosing OBS scenes for streamer: ${streamerName}`);
+    
+    const sceneName = `Stream_${streamerName}`;
+    const mediaSourceName = `Media_${streamerName}`;
+    const chatSourceName = `Chat_${streamerName}`;
+    
+    // Get all scenes
+    const sceneList = await obs.call('GetSceneList');
+    const currentScene = await getCurrentOBSScene();
+    
+    logInfo(`[OBS] 📊 Scene Diagnosis Results for ${streamerName}:`);
+    logInfo(`[OBS]   • Expected scene name: "${sceneName}"`);
+    logInfo(`[OBS]   • Current active scene: "${currentScene || '(none)'}"`);
+    logInfo(`[OBS]   • Total scenes in collection: ${sceneList.scenes.length}`);
+    
+    // Check if streamer scene exists
+    const streamerScene = sceneList.scenes.find(scene => 
+      scene.sceneName === sceneName || 
+      scene.sceneName.toLowerCase() === sceneName.toLowerCase()
+    );
+    
+    if (streamerScene) {
+      logInfo(`[OBS]   ✅ Streamer scene found: "${streamerScene.sceneName}"`);
+      
+      // Get scene items
+      try {
+        const sceneItems = await obs.call('GetSceneItemList', { sceneName: streamerScene.sceneName });
+        logInfo(`[OBS]   • Scene items count: ${sceneItems.sceneItems.length}`);
+        
+        // Check for media source
+        const mediaSource = sceneItems.sceneItems.find(item => 
+          item.sourceName === mediaSourceName || 
+          item.sourceName.includes(streamerName) ||
+          item.inputKind === 'ffmpeg_source'
+        );
+        
+        if (mediaSource) {
+          logInfo(`[OBS]   ✅ Media source found: "${mediaSource.sourceName}" (ID: ${mediaSource.sceneItemId})`);
+          logInfo(`[OBS]   • Source type: ${mediaSource.inputKind || 'unknown'}`);
+          logInfo(`[OBS]   • Source enabled: ${mediaSource.sceneItemEnabled || false}`);
+          
+          // Check media source settings
+          try {
+            const sourceSettings = await obs.call('GetInputSettings', { inputName: mediaSource.sourceName });
+            const hwDecode = sourceSettings.inputSettings.hw_decode || false;
+            const inputUrl = sourceSettings.inputSettings.input || 'not set';
+            logInfo(`[OBS]   • Hardware decoding: ${hwDecode ? 'enabled' : 'disabled'}`);
+            logInfo(`[OBS]   • Input URL: ${inputUrl.length > 50 ? inputUrl.substring(0, 50) + '...' : inputUrl}`);
+          } catch (settingsError) {
+            logWarn(`[OBS]   ⚠️ Could not read media source settings: ${settingsError.message}`);
+          }
+          
+          // Check transform/bounds
+          try {
+            const transform = await obs.call('GetSceneItemTransform', { 
+              sceneName: streamerScene.sceneName, 
+              sceneItemId: mediaSource.sceneItemId 
+            });
+            logInfo(`[OBS]   • Transform bounds type: ${transform.sceneItemTransform.boundsType || 'none'}`);
+            logInfo(`[OBS]   • Transform bounds: ${transform.sceneItemTransform.boundsWidth || 0}x${transform.sceneItemTransform.boundsHeight || 0}`);
+          } catch (transformError) {
+            logWarn(`[OBS]   ⚠️ Could not read transform: ${transformError.message}`);
+          }
+        } else {
+          logWarn(`[OBS]   ❌ Media source not found (expected: "${mediaSourceName}")`);
+          logInfo(`[OBS]   • Available sources in scene:`);
+          sceneItems.sceneItems.forEach((item, index) => {
+            logInfo(`[OBS]     ${index + 1}. "${item.sourceName}" (${item.inputKind || 'unknown'})`);
+          });
+        }
+        
+        // Check for chat source
+        const chatSource = sceneItems.sceneItems.find(item => 
+          item.sourceName === chatSourceName ||
+          item.sourceName.includes('Chat_') ||
+          item.inputKind === 'browser_source'
+        );
+        
+        if (chatSource) {
+          logInfo(`[OBS]   ✅ Chat source found: "${chatSource.sourceName}" (ID: ${chatSource.sceneItemId})`);
+          logInfo(`[OBS]   • Chat enabled: ${chatSource.sceneItemEnabled || false}`);
+        } else {
+          logInfo(`[OBS]   ℹ️ Chat source not found (expected: "${chatSourceName}") - this is normal if chat is disabled`);
+        }
+        
+      } catch (sceneItemsError) {
+        logError(`[OBS]   ❌ Could not get scene items: ${sceneItemsError.message}`);
+      }
+      
+    } else {
+      logWarn(`[OBS]   ❌ Streamer scene not found`);
+      logInfo(`[OBS]   • Available scenes:`);
+      sceneList.scenes.forEach((scene, index) => {
+        const isCurrent = scene.sceneName === currentScene;
+        logInfo(`[OBS]     ${index + 1}. "${scene.sceneName}"${isCurrent ? ' (CURRENT)' : ''}`);
+      });
+    }
+    
+    // Check canvas resolution
+    try {
+      const videoSettings = await obs.call('GetVideoSettings');
+      logInfo(`[OBS]   • Canvas resolution: ${videoSettings.baseWidth}x${videoSettings.baseHeight}`);
+      logInfo(`[OBS]   • Output resolution: ${videoSettings.outputWidth}x${videoSettings.outputHeight}`);
+    } catch (videoError) {
+      logWarn(`[OBS]   ⚠️ Could not get video settings: ${videoError.message}`);
+    }
+    
+    logInfo(`[OBS] ✅ Scene diagnosis completed for ${streamerName}`);
+    return true;
+    
+  } catch (error) {
+    logError(`[OBS] ❌ Scene diagnosis failed for ${streamerName}: ${error.message}`);
+    return false;
+  }
+}
+
 async function updateMediaSourceBounds(streamerName) {
   if (!isObsConnected) {
     logWarn('[OBS] ⚠️ Cannot update media source bounds: not connected to OBS');
