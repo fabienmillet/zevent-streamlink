@@ -120,3 +120,4 @@ frontend/*.local
 .Trashes
 ehthumbs.db
 Thumbs.db
+backend/streams.json
