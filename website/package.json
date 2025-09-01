@@ -1,0 +1,26 @@
+{
+  "name": "zevent-streamlink-website",
+  "version": "1.0.0",
+  "description": "Site vitrine pour ZEvent-Streamlink",
+  "scripts": {
+    "dev": "python -m http.server 8000",
+    "dev:node": "npx http-server -p 8000 -o",
+    "build": "echo 'Site statique - pas de build nécessaire'",
+    "deploy:netlify": "netlify deploy --prod --dir=.",
+    "deploy:vercel": "vercel --prod",
+    "deploy:surge": "surge . zevent-streamlink.surge.sh"
+  },
+  "keywords": [
+    "zevent",
+    "streamlink",
+    "twitch",
+    "obs",
+    "website",
+    "vitrine"
+  ],
+  "author": "ZEvent-Streamlink Team",
+  "license": "MIT",
+  "devDependencies": {
+    "http-server": "^14.1.1"
+  }
+}
