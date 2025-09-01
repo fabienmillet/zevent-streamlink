@@ -58,7 +58,7 @@
           <h3 class="streamer-name">
             {{ stream.name }}
             <div class="zevent-badge-container">
-              <img v-if="true" 
+              <img v-if="isZeventStreamer" 
                    src="/badge_zevent.png" 
                    class="zevent-heart-badge" 
                    alt="ZEvent 2025" />
@@ -317,15 +317,13 @@ const zeventStreamer = computed(() => {
 // Vérifie si c'est un streamer ZEvent
 const isZeventStreamer = computed(() => {
   console.log('DEBUG - Stream data:', props.stream.name, props.stream)
-  // Utilise d'abord la propriété du stream (backend)
-  if (props.stream.isZEventStreamer !== undefined) {
-    console.log('Stream ZEvent status (backend):', props.stream.name, props.stream.isZEventStreamer)
-    return Boolean(props.stream.isZEventStreamer)
-  }
-  // Fallback sur la recherche dans la liste ZEvent
-  const fallback = Boolean(zeventStreamer.value)
-  console.log('Fallback ZEvent status:', props.stream.name, fallback)
-  return fallback
+  
+  // Utilise la propriété du stream (backend) - doit toujours être définie maintenant
+  const backendValue = props.stream.isZEventStreamer
+  console.log('Stream ZEvent status (backend):', props.stream.name, backendValue, typeof backendValue)
+  
+  // Retourner directement la valeur du backend (false ou true)
+  return Boolean(backendValue)
 })
 
 // État du flux

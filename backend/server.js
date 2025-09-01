@@ -2929,7 +2929,7 @@ async function handleApi(req, res) {
             m3u8Url: stream.m3u8Url || stream.httpUrl,
             quality: stream.quality,
             isLive: twitchStatus.online,
-            isZEvent: isZEvent,
+            isZEventStreamer: isZEvent, // Utiliser le nom cohérent avec le frontend
             twitchTitle: twitchStatus.title,
             twitchViewers: twitchStatus.viewers,
             profileUrl: twitchStatus.profileUrl,
@@ -2964,7 +2964,7 @@ async function handleApi(req, res) {
             m3u8Url: stream.m3u8Url || stream.httpUrl,
             quality: stream.quality,
             isLive: false,
-            isZEvent: isZEvent,
+            isZEventStreamer: isZEvent, // Utiliser le nom cohérent avec le frontend
             twitchTitle: null,
             twitchViewers: null,
             profileUrl: null,
