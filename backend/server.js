@@ -2253,53 +2253,126 @@ async function subscribeToStreamEvents(login) {
 }
 
 let streamStatusCheckInterval = null;
+let streamErrorCounts = {}; // Compteur d'erreurs par streamer pour éviter les faux positifs
 
 function startStreamStatusMonitoring() {
   if (streamStatusCheckInterval) {
     clearInterval(streamStatusCheckInterval);
   }
   
-  // Vérifier le statut toutes les 2 minutes
+  // Configuration depuis les variables d'environnement
+  const interval = parseInt(process.env.STREAM_UPDATE_INTERVAL) || 180000; // 3 minutes par défaut
+  const gracePeriod = parseInt(process.env.STREAM_OFFLINE_GRACE_PERIOD) || 2;
+  const batchSize = parseInt(process.env.TWITCH_API_BATCH_SIZE) || 20;
+  
+  logInfo(`[Twitch Monitor] 🔄 Starting monitoring with ${interval/1000}s interval, grace period: ${gracePeriod}, batch size: ${batchSize}`);
+  
   streamStatusCheckInterval = setInterval(async () => {
     if (streams.length === 0) return;
     
     try {
       const token = await getTwitchAppToken();
-      if (!token) return;
+      if (!token) {
+        logWarn('[Twitch Monitor] ⚠️ No Twitch token available, skipping check');
+        return;
+      }
       
-      // Récupérer les logins de tous les streams
-      const logins = streams.map(s => s.name).join('&user_login=');
+      // Diviser les streams en batches pour éviter les limites API
+      const streamBatches = [];
+      for (let i = 0; i < streams.length; i += batchSize) {
+        streamBatches.push(streams.slice(i, i + batchSize));
+      }
       
-      const response = await fetch(`https://api.twitch.tv/helix/streams?user_login=${logins}`, {
-        headers: {
-          'Client-ID': TWITCH_CLIENT_ID,
-          'Authorization': `Bearer ${token}`,
-        },
-      });
+      logDebug(`[Twitch Monitor] 📊 Checking ${streams.length} streamers in ${streamBatches.length} batches`);
       
-      if (response.ok) {
-        const data = await response.json();
-        const liveStreamers = new Set(data.data.map(stream => stream.user_login.toLowerCase()));
+      const allLiveStreamers = new Set();
+      let apiErrors = 0;
+      
+      // Traiter chaque batch avec délai pour éviter le rate limiting
+      for (let batchIndex = 0; batchIndex < streamBatches.length; batchIndex++) {
+        const batch = streamBatches[batchIndex];
+        const logins = batch.map(s => s.name).join('&user_login=');
         
-        // Mettre à jour le statut pour tous les streamers
-        for (const stream of streams) {
-          const wasOnline = streamerStatus[stream.name.toLowerCase()];
-          const isOnline = liveStreamers.has(stream.name.toLowerCase());
+        try {
+          const response = await fetch(`https://api.twitch.tv/helix/streams?user_login=${logins}`, {
+            headers: {
+              'Client-ID': TWITCH_CLIENT_ID,
+              'Authorization': `Bearer ${token}`,
+            },
+          });
           
-          if (wasOnline !== isOnline) {
-            streamerStatus[stream.name.toLowerCase()] = isOnline;
-            logInfo(`[Twitch Monitor] ${isOnline ? '🟢' : '🔴'} ${stream.name} is ${isOnline ? 'ONLINE' : 'OFFLINE'}`);
+          if (response.status === 429) {
+            // Rate limiting détecté
+            logWarn('[Twitch Monitor] ⚠️ Rate limit detected, will retry later');
+            return; // Sortir complètement pour cette fois
+          }
+          
+          if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+          }
+          
+          const data = await response.json();
+          data.data.forEach(stream => {
+            allLiveStreamers.add(stream.user_login.toLowerCase());
+          });
+          
+          logDebug(`[Twitch Monitor] ✅ Batch ${batchIndex + 1}/${streamBatches.length}: ${data.data.length} live streamers found`);
+          
+          // Petite pause entre les batches pour être gentil avec l'API
+          if (batchIndex < streamBatches.length - 1) {
+            await new Promise(resolve => setTimeout(resolve, 500));
+          }
+          
+        } catch (error) {
+          apiErrors++;
+          logError(`[Twitch Monitor] ❌ Error checking batch ${batchIndex + 1}:`, error.message);
+          
+          // Si trop d'erreurs, arrêter pour cette fois
+          if (apiErrors >= 3) {
+            logError('[Twitch Monitor] 🚨 Too many API errors, skipping this check cycle');
+            return;
           }
         }
-        
-        logDebug(`[Twitch Monitor] 📊 Checked ${streams.length} streamers, ${liveStreamers.size} online`);
       }
+      
+      // Mettre à jour le statut avec système de grâce
+      for (const stream of streams) {
+        const streamerName = stream.name.toLowerCase();
+        const wasOnline = streamerStatus[streamerName];
+        const isOnline = allLiveStreamers.has(streamerName);
+        
+        // Système de grâce : on ne marque offline qu'après plusieurs échecs
+        if (!isOnline) {
+          streamErrorCounts[streamerName] = (streamErrorCounts[streamerName] || 0) + 1;
+          
+          if (streamErrorCounts[streamerName] >= gracePeriod) {
+            // Vraiment offline après la période de grâce
+            if (wasOnline !== false) {
+              streamerStatus[streamerName] = false;
+              logInfo(`[Twitch Monitor] 🔴 ${stream.name} is OFFLINE (after ${streamErrorCounts[streamerName]} checks)`);
+            }
+          } else {
+            logDebug(`[Twitch Monitor] ⚠️ ${stream.name} offline check ${streamErrorCounts[streamerName]}/${gracePeriod}`);
+          }
+        } else {
+          // Stream online : reset le compteur d'erreurs
+          streamErrorCounts[streamerName] = 0;
+          
+          if (wasOnline !== true) {
+            streamerStatus[streamerName] = true;
+            logInfo(`[Twitch Monitor] 🟢 ${stream.name} is ONLINE`);
+          }
+        }
+      }
+      
+      logDebug(`[Twitch Monitor] 📊 Check complete: ${allLiveStreamers.size}/${streams.length} online, ${apiErrors} API errors`);
+      
     } catch (error) {
-      logError('[Twitch Monitor] ❌ Error checking stream status:', error.message);
+      logError('[Twitch Monitor] ❌ Critical error in monitoring cycle:', error.message);
     }
-  }, 120000);
+  }, interval);
   
-  logInfo('[Twitch Monitor] 🔄 Started periodic stream status monitoring (every 2 minutes)');
+  logInfo(`[Twitch Monitor] 🔄 Stream status monitoring started successfully`);
 }
 
 try {
