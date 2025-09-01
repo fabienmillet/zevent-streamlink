@@ -4151,7 +4151,9 @@ function startServer(port = DEFAULT_PORT) {
     res.end('Not Found');
   });
 
-  srv.listen(port, () => {
+  const host = process.env.HOST || 'localhost';
+  
+  srv.listen(port, host, () => {
     const asciiLogo = [
       '\x1b[36m',
       "  ______________      ________ _   _ _______     _____ _                            _ _       _    ",
@@ -4163,7 +4165,7 @@ function startServer(port = DEFAULT_PORT) {
       '\x1b[0m'
     ].join('\n');
     logAlways(asciiLogo);
-    logAlways(`\x1b[32m[API]\x1b[0m listening on http://localhost:${port}`);
+    logAlways(`\x1b[32m[API]\x1b[0m listening on http://${host}:${port}`);
     
     updateStreamsZEventInfo().catch(e => {
       logError('[ZEvent] Failed to update stream info:', e.message);
