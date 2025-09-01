@@ -1,6 +1,6 @@
 {
   "name": "zevent-streamlink",
-  "version": "1.0.0",
+  "version": "0.1.2",
   "description": "Application fullstack pour gérer les flux Twitch via Streamlink",
   "main": "index.js",
   "scripts": {
