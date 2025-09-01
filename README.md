@@ -2,6 +2,10 @@
   <img src="ZEvent-Streamlink_logo.png" alt="ZEvent-Streamlink Logo" />
 </div>
 
+<p align="center">
+  <a href="https://zevent.fr/don" target="_blank">🧡 Faire un don au ZEvent</a>
+</p>
+
 ---
 
 ## 📖 Description
