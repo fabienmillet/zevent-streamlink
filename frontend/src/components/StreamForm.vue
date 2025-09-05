@@ -312,12 +312,12 @@ const selectStreamer = (streamer) => {
   showZEventModal.value = false
   showForm.value = true
   
-  // Auto-soumettre si le streamer est en ligne
-  if (streamer.online) {
-    setTimeout(() => {
-      submitForm()
-    }, 500)
-  }
+  // Ne plus auto-soumettre - laisser l'utilisateur configurer et soumettre manuellement
+  // if (streamer.online) {
+  //   setTimeout(() => {
+  //     submitForm()
+  //   }, 500)
+  // }
 }
 
 // Charger les streamers quand la modal s'ouvre
