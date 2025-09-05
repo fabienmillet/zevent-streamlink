@@ -269,6 +269,9 @@ async function connectToOBS() {
       
       await ensureZEventCollection();
       
+      // D'abord découvrir les scènes existantes si streams.json était vide
+      await loadStreamsFromOBSIfEmpty();
+      
       await createExistingStreamerScenes();
       
     } catch (e) {
@@ -2072,6 +2075,92 @@ async function createExistingStreamerScenes() {
   logInfo(`[OBS] ✅ Finished creating scenes for existing streams`);
 }
 
+// Fonction pour découvrir automatiquement les scènes OBS existantes avec des noms de streamers
+async function discoverExistingOBSScenes() {
+  if (!isObsConnected) {
+    logDebug('[OBS] Cannot discover existing scenes: not connected to OBS');
+    return [];
+  }
+
+  try {
+    logInfo('[OBS] 🔍 Discovering existing streamer scenes in OBS...');
+    
+    const sceneList = await obs.call('GetSceneList');
+    const discoveredStreams = [];
+    let streamId = 1;
+    
+    // Chercher toutes les scènes qui suivent le format Stream_<streamer>
+    // L'ordre est préservé car on parcourt sceneList.scenes dans l'ordre OBS
+    for (const scene of sceneList.scenes) {
+      const sceneName = scene.sceneName;
+      
+      // Vérifier si la scène suit le format Stream_<streamer>
+      if (sceneName.startsWith('Stream_')) {
+        const streamerName = sceneName.replace('Stream_', '');
+        
+        // Vérifier que le nom du streamer n'est pas vide et est valide
+        if (streamerName && streamerName.trim() && !streamerName.includes(' ')) {
+          try {
+            // Vérifier si la scène contient une source média
+            const sceneItems = await obs.call('GetSceneItemList', { sceneName });
+            const hasMediaSource = sceneItems.sceneItems.some(item => 
+              item.sourceName.includes(`Media_${streamerName}`) || 
+              item.inputKind === 'ffmpeg_source'
+            );
+            
+            if (hasMediaSource) {
+              // Essayer d'obtenir l'URL de la source média pour construire l'URL Twitch
+              const mediaSource = sceneItems.sceneItems.find(item => 
+                item.sourceName.includes(`Media_${streamerName}`) || 
+                item.inputKind === 'ffmpeg_source'
+              );
+              
+              let twitchUrl = `https://twitch.tv/${streamerName}`;
+              let m3u8Url = null;
+              let hardwareDecoding = false;
+              
+              if (mediaSource) {
+                try {
+                  const sourceSettings = await obs.call('GetInputSettings', { inputName: mediaSource.sourceName });
+                  m3u8Url = sourceSettings.inputSettings.input || null;
+                  hardwareDecoding = sourceSettings.inputSettings.hw_decode || false;
+                } catch (error) {
+                  logDebug(`[OBS] Could not read media source settings for ${streamerName}: ${error.message}`);
+                }
+              }
+              
+              const streamData = {
+                id: String(streamId++), // ID séquentiel basé sur l'ordre des scènes
+                name: streamerName,
+                twitchUrl: twitchUrl,
+                quality: 'best', // Qualité par défaut
+                isLive: false,
+                m3u8Url: m3u8Url,
+                isZEventStreamer: false, // Sera mis à jour plus tard
+                hardwareDecoding: hardwareDecoding
+              };
+              
+              discoveredStreams.push(streamData);
+              logInfo(`[OBS] ✅ Discovered streamer scene [${streamData.id}]: ${sceneName} -> ${streamerName}`);
+            } else {
+              logDebug(`[OBS] Scene ${sceneName} has no media source, skipping`);
+            }
+          } catch (error) {
+            logWarn(`[OBS] Could not analyze scene ${sceneName}: ${error.message}`);
+          }
+        }
+      }
+    }
+    
+    logInfo(`[OBS] 🎯 Discovery completed: found ${discoveredStreams.length} existing streamer scenes in original OBS order`);
+    return discoveredStreams;
+    
+  } catch (error) {
+    logError(`[OBS] ❌ Failed to discover existing scenes: ${error.message}`);
+    return [];
+  }
+}
+
 // --- EventSub WebSocket ---
 const eventsubWsUrl = 'wss://eventsub.wss.twitch.tv/ws';
 
@@ -2511,16 +2600,62 @@ function setHwDecodingPreference(streamerName, enabled) {
 }
 
 // Charge les flux existants au démarrage
+let streamsLoadedFromOBS = false;
 try {
   const arr = JSON.parse(fs.readFileSync(streamsFile, 'utf8'));
-  if (Array.isArray(arr)) {
+  if (Array.isArray(arr) && arr.length > 0) {
     streams = arr;
     // nextId = max id + 1
     nextId = streams.reduce((max, s) => Math.max(max, parseInt(s.id, 10) || 0), 0) + 1;
+    logInfo(`[Streams] ✅ Loaded ${streams.length} streams from streams.json`);
+  } else {
+    // Le fichier JSON est vide ou n'existe pas, on va découvrir les scènes OBS existantes
+    streams = [];
+    nextId = 1;
+    streamsLoadedFromOBS = true;
+    logInfo('[Streams] 📋 streams.json is empty, will discover existing OBS scenes...');
   }
 } catch (e) {
   streams = [];
   nextId = 1;
+  streamsLoadedFromOBS = true;
+  logInfo('[Streams] 📋 streams.json not found, will discover existing OBS scenes...');
+}
+
+// Fonction pour charger automatiquement les scènes OBS existantes si streams.json est vide
+async function loadStreamsFromOBSIfEmpty() {
+  if (!streamsLoadedFromOBS || !isObsConnected) return;
+  
+  try {
+    logInfo('[Streams] 🔍 Attempting to discover existing OBS scenes...');
+    const discoveredStreams = await discoverExistingOBSScenes();
+    
+    if (discoveredStreams.length > 0) {
+      streams = discoveredStreams;
+      
+      // Mettre à jour les informations ZEvent pour les streams découverts
+      await getZEventStreamers();
+      for (const stream of streams) {
+        const isZEvent = isZEventStreamer(stream.name);
+        stream.isZEventStreamer = isZEvent;
+      }
+      
+      // Recalculer les IDs
+      streams.forEach((stream, index) => {
+        stream.id = String(index + 1);
+      });
+      nextId = streams.length + 1;
+      
+      // Sauvegarder automatiquement dans streams.json
+      saveStreams();
+      
+      logInfo(`[Streams] ✅ Successfully loaded ${streams.length} streams from existing OBS scenes and saved to streams.json`);
+    } else {
+      logInfo('[Streams] ℹ️ No existing OBS scenes found to import');
+    }
+  } catch (error) {
+    logError(`[Streams] ❌ Failed to load streams from OBS scenes: ${error.message}`);
+  }
 }
 
 function migrateHardwareDecodingPrefs() {
