@@ -96,7 +96,8 @@
             <button
               type="submit"
               class="btn btn-primary"
-              :disabled="loading"
+              :disabled="loading || !form.quality"
+              :title="!form.quality ? 'Veuillez d\'abord récupérer et sélectionner une qualité' : ''"
             >
               <span class="btn-icon">
                 <component :is="loading ? Clock : Rocket" :size="16" />
@@ -306,18 +307,17 @@ const selectStreamer = (streamer) => {
   // Auto-remplir le formulaire avec les données du streamer
   form.name = streamer.display
   form.twitchUrl = `https://www.twitch.tv/${streamer.twitch}`
+  form.quality = '' // Réinitialiser la qualité pour forcer l'utilisateur à faire Fetch
   form.hardwareDecoding = false // S'assurer que le décodage matériel est désactivé par défaut
+  
+  // Réinitialiser les options de qualité pour forcer un nouveau Fetch
+  qualityOptions.value = []
   
   // Fermer la modal et ouvrir le formulaire
   showZEventModal.value = false
   showForm.value = true
   
-  // Ne plus auto-soumettre - laisser l'utilisateur configurer et soumettre manuellement
-  // if (streamer.online) {
-  //   setTimeout(() => {
-  //     submitForm()
-  //   }, 500)
-  // }
+  // L'utilisateur doit maintenant configurer et soumettre manuellement
 }
 
 // Charger les streamers quand la modal s'ouvre
@@ -331,10 +331,15 @@ const openZEventModal = () => {
 }
 
 const submitForm = () => {
+  // Validation : s'assurer que la qualité est sélectionnée
+  if (!form.quality) {
+    alert('Veuillez d\'abord récupérer et sélectionner une qualité pour le flux.')
+    return
+  }
+
   const formData = { ...form }
 
   // Do not force protocol here — backend will store m3u8 link
-
 
   emit('submit', formData)
 
