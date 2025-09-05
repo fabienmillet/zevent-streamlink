@@ -3269,6 +3269,51 @@ async function handleApi(req, res) {
     }).catch(() => sendJson(res, 400, { success: false, error: 'invalid json body' }));
   }
 
+  // PATCH /api/streams/:id/refresh -> refresh m3u8 url with current quality
+  if (req.method === 'PATCH' && /^\/api\/streams\/[^\/]+\/refresh$/.test(pathname)) {
+    const parts = pathname.split('/');
+    const id = parts[3];
+    const stream = streams.find(x => x.id === id);
+    if (!stream) return sendJson(res, 404, { success: false, error: 'not found' });
+
+    return new Promise((resolve) => {
+      // Utiliser la qualité actuelle du stream
+      const quality = stream.quality || 'best';
+      // Extraire le nom du streamer depuis l'URL ou utiliser le nom directement
+      const streamerName = extractStreamerName(stream.twitchUrl || stream.name);
+      
+      getStreamUrl(streamerName, quality, (err, m3u8) => {
+        if (err) {
+          logError(`[API] Failed to refresh stream URL for ${stream.name}:`, err.message);
+          return sendJson(res, 500, { success: false, error: `Failed to refresh stream: ${err.message}` });
+        }
+
+        // Sauvegarder l'ancienne URL pour comparaison
+        const oldUrl = stream.m3u8Url;
+        
+        // Mettre à jour l'URL M3U8
+        stream.m3u8Url = m3u8;
+        saveStreams();
+
+        logInfo(`[API] Refreshed stream URL for ${stream.name} (quality: ${quality})`);
+        
+        // Mettre à jour l'URL de la source media OBS
+        if (isObsConnected) {
+          updateMediaSourceUrl(stream.name, m3u8).catch(e => {
+            logError(`[OBS] Failed to update media source URL for ${stream.name}:`, e.message);
+          });
+        }
+
+        return sendJson(res, 200, { 
+          success: true, 
+          stream, 
+          refreshed: true,
+          urlChanged: oldUrl !== m3u8
+        });
+      });
+    });
+  }
+
   /**
    * @swagger
    * /api/streams/{id}/hardware-decoding:
