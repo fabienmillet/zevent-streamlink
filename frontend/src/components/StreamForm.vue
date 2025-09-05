@@ -129,6 +129,37 @@
           </svg>
         </div>
 
+        <!-- Boutons de tri -->
+        <div class="sort-controls">
+          <span class="sort-label">Trier par :</span>
+          <div class="sort-buttons">
+            <button 
+              class="sort-btn"
+              :class="{ active: sortBy === 'name' }"
+              @click="sortBy = 'name'"
+              title="Trier par nom (A-Z)"
+            >
+              A-Z
+            </button>
+            <button 
+              class="sort-btn"
+              :class="{ active: sortBy === 'viewers-desc' }"
+              @click="sortBy = 'viewers-desc'"
+              title="Trier par spectateurs (décroissant)"
+            >
+              👁️ ↓
+            </button>
+            <button 
+              class="sort-btn"
+              :class="{ active: sortBy === 'viewers-asc' }"
+              @click="sortBy = 'viewers-asc'"
+              title="Trier par spectateurs (croissant)"
+            >
+              👁️ ↑
+            </button>
+          </div>
+        </div>
+
         <!-- Onglets -->
         <div class="tabs-container">
           <div class="tabs-nav">
@@ -221,6 +252,7 @@ const loadingStreamers = ref(false)
 const zeventStreamers = ref([])
 const searchQuery = ref('')
 const activeTab = ref('lan') // Onglet actif par défaut
+const sortBy = ref('name') // Tri par défaut : A-Z
 
 // Propriétés calculées pour filtrer et séparer les streamers
 const filteredStreamers = computed(() => {
@@ -245,9 +277,38 @@ const onlineStreamers = computed(() => {
   return filteredStreamers.value.filter(streamer => streamer.location === 'Online')
 })
 
+// Fonction pour trier les streamers
+const sortStreamers = (streamers) => {
+  const sorted = [...streamers]
+  
+  switch (sortBy.value) {
+    case 'name':
+      return sorted.sort((a, b) => a.display.localeCompare(b.display))
+    case 'viewers-desc':
+      return sorted.sort((a, b) => {
+        // Les streamers en ligne d'abord, puis par nombre de viewers décroissant
+        if (a.online && !b.online) return -1
+        if (!a.online && b.online) return 1
+        if (!a.online && !b.online) return a.display.localeCompare(b.display)
+        return (b.viewersAmount?.number || 0) - (a.viewersAmount?.number || 0)
+      })
+    case 'viewers-asc':
+      return sorted.sort((a, b) => {
+        // Les streamers en ligne d'abord, puis par nombre de viewers croissant
+        if (a.online && !b.online) return -1
+        if (!a.online && b.online) return 1
+        if (!a.online && !b.online) return a.display.localeCompare(b.display)
+        return (a.viewersAmount?.number || 0) - (b.viewersAmount?.number || 0)
+      })
+    default:
+      return sorted
+  }
+}
+
 // Fonction pour obtenir les streamers de l'onglet actif
 const getCurrentStreamers = () => {
-  return activeTab.value === 'lan' ? lanStreamers.value : onlineStreamers.value
+  const streamers = activeTab.value === 'lan' ? lanStreamers.value : onlineStreamers.value
+  return sortStreamers(streamers)
 }
 
 const form = reactive({
@@ -312,12 +373,7 @@ const selectStreamer = (streamer) => {
   showZEventModal.value = false
   showForm.value = true
   
-  // Auto-soumettre si le streamer est en ligne
-  if (streamer.online) {
-    setTimeout(() => {
-      submitForm()
-    }, 500)
-  }
+  // Ne plus auto-soumettre, laisser l'utilisateur valider manuellement
 }
 
 // Charger les streamers quand la modal s'ouvre
@@ -325,6 +381,7 @@ const openZEventModal = () => {
   showZEventModal.value = true
   searchQuery.value = '' // Réinitialiser la recherche
   activeTab.value = 'lan' // Commencer par l'onglet présenciel
+  sortBy.value = 'name' // Réinitialiser le tri à A-Z
   if (zeventStreamers.value.length === 0) {
     fetchZEventStreamers()
   }
@@ -829,6 +886,53 @@ const updateTwitchUrl = () => {
     transform: translateY(-50%);
     color: var(--text-muted);
     pointer-events: none;
+  }
+}
+
+.sort-controls {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 1rem 1.5rem;
+  border-bottom: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+
+  .sort-label {
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    font-weight: 500;
+    white-space: nowrap;
+  }
+
+  .sort-buttons {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+
+  .sort-btn {
+    padding: 0.5rem 0.75rem;
+    background: var(--card-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 0.375rem;
+    color: var(--text-secondary);
+    font-size: 0.8rem;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    white-space: nowrap;
+
+    &:hover {
+      background: var(--card-bg-hover);
+      border-color: var(--border-color-hover);
+      transform: translateY(-1px);
+    }
+
+    &.active {
+      background: var(--primary-green);
+      border-color: var(--primary-green);
+      color: white;
+      box-shadow: 0 2px 4px rgba(34, 197, 94, 0.2);
+    }
   }
 }
 
