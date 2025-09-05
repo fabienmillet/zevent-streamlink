@@ -2090,8 +2090,8 @@ async function discoverExistingOBSScenes() {
     let streamId = 1;
     
     // Chercher toutes les scènes qui suivent le format Stream_<streamer>
-    // L'ordre est préservé car on parcourt sceneList.scenes dans l'ordre OBS
-    for (const scene of sceneList.scenes) {
+    // L'ordre est inversé car OBS retourne les scènes dans l'ordre inverse de celui désiré
+    for (const scene of sceneList.scenes.slice().reverse()) {
       const sceneName = scene.sceneName;
       
       // Vérifier si la scène suit le format Stream_<streamer>
