@@ -2087,6 +2087,99 @@ let zEventStreamers = [];
 let zEventLastUpdate = 0;
 const ZEVENT_CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
 
+// Cache global pour les statuts des streamers avec TTL
+const twitchStreamCache = new Map();
+const TWITCH_CACHE_DURATION = parseInt(process.env.TWITCH_CACHE_DURATION) || 120000; // 2 minutes par défaut
+
+// Gestion du rate limiting automatique
+let rateLimitDetected = false;
+let rateLimitUntil = 0;
+let adaptiveInterval = parseInt(process.env.STREAM_UPDATE_INTERVAL) || 180000;
+
+// Fonctions de gestion du cache Twitch
+function getTwitchFromCache(streamerName) {
+  const cacheKey = streamerName.toLowerCase();
+  const cached = twitchStreamCache.get(cacheKey);
+  
+  if (!cached) return null;
+  
+  const now = Date.now();
+  if (now - cached.timestamp > TWITCH_CACHE_DURATION) {
+    twitchStreamCache.delete(cacheKey);
+    return null;
+  }
+  
+  return cached.data;
+}
+
+function setTwitchCache(streamerName, data) {
+  const cacheKey = streamerName.toLowerCase();
+  twitchStreamCache.set(cacheKey, {
+    data: data,
+    timestamp: Date.now()
+  });
+}
+
+function clearTwitchCache() {
+  twitchStreamCache.clear();
+}
+
+// Mise à jour du cache pour plusieurs streamers depuis les données de monitoring
+function updateTwitchCacheFromMonitoring(liveStreamers, offlineStreamers) {
+  const now = Date.now();
+  
+  // Marquer les streamers en ligne
+  liveStreamers.forEach(streamData => {
+    const cacheKey = streamData.user_login.toLowerCase();
+    setTwitchCache(cacheKey, {
+      online: true,
+      title: streamData.title,
+      viewers: streamData.viewer_count,
+      profileUrl: null, // Sera mis à jour lors d'un appel individuel si nécessaire
+      isZEventStreamer: isZEventStreamer(cacheKey)
+    });
+  });
+  
+  // Marquer les streamers hors ligne
+  offlineStreamers.forEach(streamerName => {
+    const existing = getTwitchFromCache(streamerName);
+    if (existing) {
+      setTwitchCache(streamerName, {
+        ...existing,
+        online: false,
+        title: null,
+        viewers: null
+      });
+    } else {
+      setTwitchCache(streamerName, {
+        online: false,
+        title: null,
+        viewers: null,
+        profileUrl: null,
+        isZEventStreamer: isZEventStreamer(streamerName)
+      });
+    }
+  });
+}
+
+// Nettoyage périodique du cache pour éviter l'accumulation de données expirées
+setInterval(() => {
+  const now = Date.now();
+  const keysToDelete = [];
+  
+  for (const [key, value] of twitchStreamCache.entries()) {
+    if (now - value.timestamp > TWITCH_CACHE_DURATION) {
+      keysToDelete.push(key);
+    }
+  }
+  
+  keysToDelete.forEach(key => twitchStreamCache.delete(key));
+  
+  if (keysToDelete.length > 0) {
+    logDebug(`[Cache] 🧹 Cleaned ${keysToDelete.length} expired cache entries`);
+  }
+}, TWITCH_CACHE_DURATION / 2); // Nettoyer toutes les minutes
+
 async function getZEventStreamers() {
   const now = Date.now();
   if (now - zEventLastUpdate < ZEVENT_CACHE_DURATION && zEventStreamers.length > 0) {
@@ -2261,13 +2354,42 @@ function startStreamStatusMonitoring() {
   }
   
   // Configuration depuis les variables d'environnement
-  const interval = parseInt(process.env.STREAM_UPDATE_INTERVAL) || 180000; // 3 minutes par défaut
+  const baseInterval = parseInt(process.env.STREAM_UPDATE_INTERVAL) || 180000; // 3 minutes par défaut
   const gracePeriod = parseInt(process.env.STREAM_OFFLINE_GRACE_PERIOD) || 2;
   const batchSize = parseInt(process.env.TWITCH_API_BATCH_SIZE) || 20;
   
-  logInfo(`[Twitch Monitor] 🔄 Starting monitoring with ${interval/1000}s interval, grace period: ${gracePeriod}, batch size: ${batchSize}`);
+  // Initialiser l'intervalle adaptatif
+  adaptiveInterval = baseInterval;
   
-  streamStatusCheckInterval = setInterval(async () => {
+  logInfo(`[Twitch Monitor] 🔄 Starting monitoring with ${baseInterval/1000}s base interval, grace period: ${gracePeriod}, batch size: ${batchSize}`);
+  
+  function scheduleNextCheck() {
+    // Vérifier si on est en période de rate limit
+    if (rateLimitDetected && Date.now() < rateLimitUntil) {
+      const remainingTime = Math.ceil((rateLimitUntil - Date.now()) / 1000);
+      logWarn(`[Twitch Monitor] ⏸️ Rate limit active, delaying next check by ${remainingTime}s`);
+      setTimeout(scheduleNextCheck, remainingTime * 1000);
+      return;
+    }
+    
+    // Reset rate limit state if expired
+    if (rateLimitDetected && Date.now() >= rateLimitUntil) {
+      rateLimitDetected = false;
+      adaptiveInterval = baseInterval; // Reset to base interval
+      logInfo(`[Twitch Monitor] 🟢 Rate limit period ended, resuming normal monitoring`);
+    }
+    
+    streamStatusCheckInterval = setTimeout(async () => {
+      await performStreamCheck(baseInterval, gracePeriod, batchSize);
+      scheduleNextCheck(); // Schedule next check
+    }, adaptiveInterval);
+  }
+  
+  // Start the first check
+  scheduleNextCheck();
+}
+
+async function performStreamCheck(baseInterval, gracePeriod, batchSize) {
     if (streams.length === 0) return;
     
     try {
@@ -2283,9 +2405,10 @@ function startStreamStatusMonitoring() {
         streamBatches.push(streams.slice(i, i + batchSize));
       }
       
-      logDebug(`[Twitch Monitor] 📊 Checking ${streams.length} streamers in ${streamBatches.length} batches`);
+      logDebug(`[Twitch Monitor] 📊 Checking ${streams.length} streamers in ${streamBatches.length} batches (interval: ${adaptiveInterval/1000}s)`);
       
       const allLiveStreamers = new Set();
+      const allLiveStreamData = []; // Stocker les données complètes pour le cache
       let apiErrors = 0;
       
       // Traiter chaque batch avec délai pour éviter le rate limiting
@@ -2302,9 +2425,12 @@ function startStreamStatusMonitoring() {
           });
           
           if (response.status === 429) {
-            // Rate limiting détecté
-            logWarn('[Twitch Monitor] ⚠️ Rate limit detected, will retry later');
-            return; // Sortir complètement pour cette fois
+            // Rate limiting détecté - adapter l'intervalle
+            rateLimitDetected = true;
+            rateLimitUntil = Date.now() + 300000; // 5 minutes
+            adaptiveInterval = Math.min(adaptiveInterval * 2, 600000); // Doubler l'intervalle (max 10 minutes)
+            logWarn(`[Twitch Monitor] ⚠️ Rate limit detected, increasing interval to ${adaptiveInterval/1000}s`);
+            return;
           }
           
           if (!response.ok) {
@@ -2314,6 +2440,7 @@ function startStreamStatusMonitoring() {
           const data = await response.json();
           data.data.forEach(stream => {
             allLiveStreamers.add(stream.user_login.toLowerCase());
+            allLiveStreamData.push(stream); // Stocker pour le cache
           });
           
           logDebug(`[Twitch Monitor] ✅ Batch ${batchIndex + 1}/${streamBatches.length}: ${data.data.length} live streamers found`);
@@ -2330,10 +2457,19 @@ function startStreamStatusMonitoring() {
           // Si trop d'erreurs, arrêter pour cette fois
           if (apiErrors >= 3) {
             logError('[Twitch Monitor] 🚨 Too many API errors, skipping this check cycle');
+            // Augmenter légèrement l'intervalle en cas d'erreurs répétées
+            adaptiveInterval = Math.min(adaptiveInterval * 1.2, 600000);
             return;
           }
         }
       }
+      
+      // Mettre à jour le cache global avec les données récupérées
+      const offlineStreamers = streams
+        .filter(stream => !allLiveStreamers.has(stream.name.toLowerCase()))
+        .map(stream => stream.name.toLowerCase());
+      
+      updateTwitchCacheFromMonitoring(allLiveStreamData, offlineStreamers);
       
       // Mettre à jour le statut avec système de grâce
       for (const stream of streams) {
@@ -2365,14 +2501,18 @@ function startStreamStatusMonitoring() {
         }
       }
       
-      logDebug(`[Twitch Monitor] 📊 Check complete: ${allLiveStreamers.size}/${streams.length} online, ${apiErrors} API errors`);
+      // Diminuer l'intervalle si tout va bien (mais pas en dessous du minimum)
+      if (apiErrors === 0 && !rateLimitDetected) {
+        adaptiveInterval = Math.max(adaptiveInterval * 0.95, baseInterval);
+      }
+      
+      logDebug(`[Twitch Monitor] 📊 Check complete: ${allLiveStreamers.size}/${streams.length} online, ${apiErrors} API errors, next check in ${adaptiveInterval/1000}s`);
       
     } catch (error) {
       logError('[Twitch Monitor] ❌ Critical error in monitoring cycle:', error.message);
+      // En cas d'erreur critique, augmenter l'intervalle
+      adaptiveInterval = Math.min(adaptiveInterval * 1.5, 600000);
     }
-  }, interval);
-  
-  logInfo(`[Twitch Monitor] 🔄 Stream status monitoring started successfully`);
 }
 
 try {
@@ -2402,6 +2542,16 @@ async function getTwitchAppToken() {
 
 // Vérifie si un streamer est online via l’API Twitch
 async function getTwitchStreamStatus(name) {
+  // Vérifier d'abord le cache
+  const cached = getTwitchFromCache(name);
+  if (cached) {
+    logDebug(`[Twitch API] 📊 Cache hit for ${name}: ${cached.online ? 'ONLINE' : 'OFFLINE'}`);
+    return cached;
+  }
+  
+  // Si pas en cache, faire un appel API
+  logDebug(`[Twitch API] 🌐 Cache miss for ${name}, fetching from API`);
+  
   const token = await getTwitchAppToken();
   // Get stream info
   const url = `https://api.twitch.tv/helix/streams?user_login=${encodeURIComponent(name)}`;
@@ -2424,20 +2574,28 @@ async function getTwitchStreamStatus(name) {
   await getZEventStreamers();
   const isZEvent = isZEventStreamer(name);
   
+  let result;
   if (data && data.data && data.data.length > 0) {
-    return { 
+    result = { 
       online: true, 
       title: data.data[0].title, 
       viewers: data.data[0].viewer_count, 
       profileUrl,
       isZEventStreamer: isZEvent
     };
+  } else {
+    result = { 
+      online: false, 
+      profileUrl,
+      isZEventStreamer: isZEvent
+    };
   }
-  return { 
-    online: false, 
-    profileUrl,
-    isZEventStreamer: isZEvent
-  };
+  
+  // Mettre en cache le résultat
+  setTwitchCache(name, result);
+  logDebug(`[Twitch API] 💾 Cached result for ${name}: ${result.online ? 'ONLINE' : 'OFFLINE'}`);
+  
+  return result;
 }
 const { execFile } = require('child_process');
 const http = require('http');
