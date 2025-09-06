@@ -1,6 +1,6 @@
 {
   "name": "zevent-streamlink-backend",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "main": "server.js",
   "type": "commonjs",
   "scripts": {
