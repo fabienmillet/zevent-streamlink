@@ -4129,8 +4129,8 @@ async function handleApi(req, res) {
           .reduce((sum, streamer) => sum + (streamer.viewersAmount?.number || 0), 0);
         const totalViewers = totalViewersNumber.toLocaleString();
 
-        // Total des donations
-        const totalDonations = data_streamers.reduce((sum, streamer) => sum + (streamer.donationAmount?.number || 0), 0);
+        // Total des donations - utilise la valeur globale de l'API
+        const totalDonations = Math.round(json.donationAmount?.number || 0).toLocaleString();
 
         // Top streamer (parmi ceux qui sont en ligne)
         const onlineStreamers = data_streamers.filter(streamer => streamer.online === true);
