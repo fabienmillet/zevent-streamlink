@@ -125,6 +125,14 @@
           <button class="copy-btn" @click="copyHttpUrl" title="Copier l'URL M3U8">
             <Copy :size="14" />
           </button>
+          <button 
+            class="refresh-btn" 
+            @click="refreshStreamUrl" 
+            :disabled="loading"
+            title="Actualiser le lien M3U8"
+          >
+            <RefreshCw :size="14" :class="{ 'spinning': loading }" />
+          </button>
           <a 
             :href="`/player.html?url=${encodeURIComponent(httpUrl)}&name=${encodeURIComponent(stream.name)}`"
             target="_blank"
@@ -624,6 +632,69 @@ const applyQuality = async () => {
     showNotification(`❌ ${errorMessage}`)
     // Remettre la qualité précédente en cas d'erreur
     selectedQuality.value = props.stream.quality
+  }
+}
+
+// Actualiser le lien M3U8
+const refreshStreamUrl = async () => {
+  if (props.loading) return
+  
+  try {
+    showNotification(`Actualisation du lien M3U8 (${props.stream.quality})...`)
+    
+    const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/api/streams/${props.stream.id}/refresh`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json'
+      }
+    })
+
+    // Vérifier d'abord si la réponse est ok
+    if (!response.ok) {
+      throw new Error(`Erreur HTTP: ${response.status} ${response.statusText}`)
+    }
+
+    // Vérifier si la réponse a du contenu
+    const responseText = await response.text()
+    if (!responseText.trim()) {
+      throw new Error('Réponse vide du serveur')
+    }
+
+    // Parser le JSON
+    let result
+    try {
+      result = JSON.parse(responseText)
+    } catch (parseError) {
+      console.error('Erreur parse JSON:', parseError)
+      console.error('Contenu de la réponse:', responseText)
+      throw new Error('Réponse serveur malformée')
+    }
+    
+    if (result.success) {
+      if (result.urlChanged) {
+        showNotification(`✅ Lien M3U8 actualisé avec succès`)
+      } else {
+        showNotification(`✅ Lien M3U8 vérifié (pas de changement)`)
+      }
+      // Le lien sera mis à jour via le polling automatique
+    } else {
+      showNotification(`❌ Erreur: ${result.error || 'Erreur inconnue'}`)
+    }
+  } catch (error) {
+    console.error('Erreur actualisation lien M3U8:', error)
+    let errorMessage = 'Erreur lors de l\'actualisation du lien'
+    
+    if (error.message.includes('Failed to fetch')) {
+      errorMessage = 'Impossible de contacter le serveur'
+    } else if (error.message.includes('JSON')) {
+      errorMessage = 'Erreur de communication avec le serveur'
+    } else if (error.message.includes('404')) {
+      errorMessage = 'Serveur non disponible (404)'
+    } else if (error.message) {
+      errorMessage = error.message
+    }
+    
+    showNotification(`❌ ${errorMessage}`)
   }
 }
 
@@ -1197,6 +1268,7 @@ onUnmounted(() => {
 }
 
 .copy-btn,
+.refresh-btn,
 .open-btn {
   display: flex;
   align-items: center;
@@ -1217,6 +1289,17 @@ onUnmounted(() => {
     color: white;
     transform: translateY(-1px);
   }
+
+  &:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: none;
+  }
+}
+
+// Animation pour le bouton refresh
+.refresh-btn .spinning {
+  animation: spin 1s linear infinite;
 }
 
 .quality-container {
