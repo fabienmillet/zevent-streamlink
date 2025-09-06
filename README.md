@@ -14,6 +14,7 @@ ZEvent-Streamlink est une application web complète pour gérer et streamer les 
 
 (C'est un projet expérimental, nouveau et sera amené à être amélioré pour la prochaine édition.)
 
+/!\ Passez en branche dev temporairement pour le bug de la cagnotte.
 ---
 
 ## ✨ Fonctionnalités
