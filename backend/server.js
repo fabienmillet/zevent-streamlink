@@ -2136,7 +2136,8 @@ function updateTwitchCacheFromMonitoring(liveStreamers, offlineStreamers) {
       title: streamData.title,
       viewers: streamData.viewer_count,
       profileUrl: null, // Sera mis à jour lors d'un appel individuel si nécessaire
-      isZEventStreamer: isZEventStreamer(cacheKey)
+      isZEventStreamer: isZEventStreamer(cacheKey),
+      source: streamData.source || 'unknown'
     });
   });
   
@@ -2148,15 +2149,18 @@ function updateTwitchCacheFromMonitoring(liveStreamers, offlineStreamers) {
         ...existing,
         online: false,
         title: null,
-        viewers: null
+        viewers: null,
+        source: existing.source || 'monitoring'
       });
     } else {
+      // Nouveau streamer offline
       setTwitchCache(streamerName, {
         online: false,
         title: null,
         viewers: null,
         profileUrl: null,
-        isZEventStreamer: isZEventStreamer(streamerName)
+        isZEventStreamer: isZEventStreamer(streamerName),
+        source: 'monitoring'
       });
     }
   });
@@ -2179,6 +2183,11 @@ setInterval(() => {
     logDebug(`[Cache] 🧹 Cleaned ${keysToDelete.length} expired cache entries`);
   }
 }, TWITCH_CACHE_DURATION / 2); // Nettoyer toutes les minutes
+
+// Cache pour les données complètes ZEvent avec TTL
+let zEventFullData = null;
+let zEventFullDataTimestamp = 0;
+const ZEVENT_FULL_DATA_DURATION = 60000; // 1 minute pour les données complètes
 
 async function getZEventStreamers() {
   const now = Date.now();
@@ -2204,6 +2213,39 @@ async function getZEventStreamers() {
   } catch (apiError) {
     logError(`[ZEvent] ❌ API call failed: ${apiError.message}`);
     return [];
+  }
+}
+
+async function getZEventFullData() {
+  const now = Date.now();
+  if (zEventFullData && (now - zEventFullDataTimestamp < ZEVENT_FULL_DATA_DURATION)) {
+    return zEventFullData;
+  }
+  
+  try {
+    logDebug('[ZEvent] Fetching full data from zevent.fr/api...');
+    const response = await fetch('https://zevent.fr/api/');
+    
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+    
+    const json = await response.json();
+    zEventFullData = json;
+    zEventFullDataTimestamp = now;
+    
+    // Mettre à jour aussi le cache des streamers ZEvent
+    if (json.live && Array.isArray(json.live)) {
+      zEventStreamers = json.live.map(s => s.twitch.toLowerCase());
+      zEventLastUpdate = now;
+    }
+    
+    logDebug(`[ZEvent] ✅ Loaded full data with ${json.live?.length || 0} streamers`);
+    return zEventFullData;
+    
+  } catch (apiError) {
+    logError(`[ZEvent] ❌ Full data API call failed: ${apiError.message}`);
+    return null;
   }
 }
 
@@ -2393,73 +2435,120 @@ async function performStreamCheck(baseInterval, gracePeriod, batchSize) {
     if (streams.length === 0) return;
     
     try {
-      const token = await getTwitchAppToken();
-      if (!token) {
-        logWarn('[Twitch Monitor] ⚠️ No Twitch token available, skipping check');
-        return;
-      }
-      
-      // Diviser les streams en batches pour éviter les limites API
-      const streamBatches = [];
-      for (let i = 0; i < streams.length; i += batchSize) {
-        streamBatches.push(streams.slice(i, i + batchSize));
-      }
-      
-      logDebug(`[Twitch Monitor] 📊 Checking ${streams.length} streamers in ${streamBatches.length} batches (interval: ${adaptiveInterval/1000}s)`);
+      logDebug(`[Stream Monitor] 📊 Checking ${streams.length} streamers (interval: ${adaptiveInterval/1000}s)`);
       
       const allLiveStreamers = new Set();
       const allLiveStreamData = []; // Stocker les données complètes pour le cache
       let apiErrors = 0;
       
-      // Traiter chaque batch avec délai pour éviter le rate limiting
-      for (let batchIndex = 0; batchIndex < streamBatches.length; batchIndex++) {
-        const batch = streamBatches[batchIndex];
-        const logins = batch.map(s => s.name).join('&user_login=');
+      // 1. D'abord essayer de récupérer les données ZEvent pour tous les streamers ZEvent
+      let zEventData = null;
+      try {
+        zEventData = await getZEventFullData();
+        if (zEventData && zEventData.live && Array.isArray(zEventData.live)) {
+          logDebug(`[Stream Monitor] ✅ Got ZEvent data for ${zEventData.live.length} streamers`);
+          
+          // Traiter les streamers ZEvent
+          zEventData.live.forEach(streamerData => {
+            const streamerName = streamerData.twitch.toLowerCase();
+            const streamInOurList = streams.find(s => s.name.toLowerCase() === streamerName);
+            
+            if (streamInOurList && streamerData.online) {
+              allLiveStreamers.add(streamerName);
+              allLiveStreamData.push({
+                user_login: streamerName,
+                title: streamerData.title || '',
+                viewer_count: streamerData.viewersAmount?.number || 0,
+                source: 'zevent'
+              });
+            }
+          });
+          
+          logDebug(`[Stream Monitor] � Found ${allLiveStreamers.size} ZEvent streamers online in our list`);
+        }
+      } catch (zEventError) {
+        logWarn(`[Stream Monitor] ⚠️ ZEvent API failed, will use Twitch fallback: ${zEventError.message}`);
+      }
+      
+      // 2. Pour les streamers non ZEvent ou si ZEvent API a échoué, utiliser Twitch API
+      const nonZEventStreamers = streams.filter(s => {
+        const streamerName = s.name.toLowerCase();
+        // Si on a des données ZEvent, exclure ceux qui sont déjà traités
+        if (zEventData && zEventData.live) {
+          const foundInZEvent = zEventData.live.some(zs => zs.twitch.toLowerCase() === streamerName);
+          return !foundInZEvent;
+        }
+        // Si pas de données ZEvent, traiter tous les streamers
+        return true;
+      });
+      
+      if (nonZEventStreamers.length > 0) {
+        logDebug(`[Stream Monitor] 🔄 Checking ${nonZEventStreamers.length} non-ZEvent streamers via Twitch API`);
         
-        try {
-          const response = await fetch(`https://api.twitch.tv/helix/streams?user_login=${logins}`, {
-            headers: {
-              'Client-ID': TWITCH_CLIENT_ID,
-              'Authorization': `Bearer ${token}`,
-            },
-          });
+        const token = await getTwitchAppToken();
+        if (!token) {
+          logWarn('[Stream Monitor] ⚠️ No Twitch token available, skipping Twitch check');
+          return;
+        }
+        
+        // Diviser en batches pour éviter les limites API
+        const streamBatches = [];
+        for (let i = 0; i < nonZEventStreamers.length; i += batchSize) {
+          streamBatches.push(nonZEventStreamers.slice(i, i + batchSize));
+        }
+        
+        // Traiter chaque batch avec délai pour éviter le rate limiting
+        for (let batchIndex = 0; batchIndex < streamBatches.length; batchIndex++) {
+          const batch = streamBatches[batchIndex];
+          const logins = batch.map(s => s.name).join('&user_login=');
           
-          if (response.status === 429) {
-            // Rate limiting détecté - adapter l'intervalle
-            rateLimitDetected = true;
-            rateLimitUntil = Date.now() + 300000; // 5 minutes
-            adaptiveInterval = Math.min(adaptiveInterval * 2, 600000); // Doubler l'intervalle (max 10 minutes)
-            logWarn(`[Twitch Monitor] ⚠️ Rate limit detected, increasing interval to ${adaptiveInterval/1000}s`);
-            return;
-          }
-          
-          if (!response.ok) {
-            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-          }
-          
-          const data = await response.json();
-          data.data.forEach(stream => {
-            allLiveStreamers.add(stream.user_login.toLowerCase());
-            allLiveStreamData.push(stream); // Stocker pour le cache
-          });
-          
-          logDebug(`[Twitch Monitor] ✅ Batch ${batchIndex + 1}/${streamBatches.length}: ${data.data.length} live streamers found`);
-          
-          // Petite pause entre les batches pour être gentil avec l'API
-          if (batchIndex < streamBatches.length - 1) {
-            await new Promise(resolve => setTimeout(resolve, 500));
-          }
-          
-        } catch (error) {
-          apiErrors++;
-          logError(`[Twitch Monitor] ❌ Error checking batch ${batchIndex + 1}:`, error.message);
-          
-          // Si trop d'erreurs, arrêter pour cette fois
-          if (apiErrors >= 3) {
-            logError('[Twitch Monitor] 🚨 Too many API errors, skipping this check cycle');
-            // Augmenter légèrement l'intervalle en cas d'erreurs répétées
-            adaptiveInterval = Math.min(adaptiveInterval * 1.2, 600000);
-            return;
+          try {
+            const response = await fetch(`https://api.twitch.tv/helix/streams?user_login=${logins}`, {
+              headers: {
+                'Client-ID': TWITCH_CLIENT_ID,
+                'Authorization': `Bearer ${token}`,
+              },
+            });
+            
+            if (response.status === 429) {
+              // Rate limiting détecté - adapter l'intervalle
+              rateLimitDetected = true;
+              rateLimitUntil = Date.now() + 300000; // 5 minutes
+              adaptiveInterval = Math.min(adaptiveInterval * 2, 600000); // Doubler l'intervalle (max 10 minutes)
+              logWarn(`[Stream Monitor] ⚠️ Rate limit detected, increasing interval to ${adaptiveInterval/1000}s`);
+              return;
+            }
+            
+            if (!response.ok) {
+              throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            }
+            
+            const data = await response.json();
+            data.data.forEach(stream => {
+              allLiveStreamers.add(stream.user_login.toLowerCase());
+              allLiveStreamData.push({
+                ...stream,
+                source: 'twitch'
+              });
+            });
+            
+            logDebug(`[Stream Monitor] ✅ Twitch batch ${batchIndex + 1}/${streamBatches.length}: ${data.data.length} live streamers found`);
+            
+            // Délai entre les batches
+            if (batchIndex < streamBatches.length - 1) {
+              await new Promise(resolve => setTimeout(resolve, 100));
+            }
+            
+          } catch (batchError) {
+            logError(`[Stream Monitor] ❌ Batch ${batchIndex + 1} failed: ${batchError.message}`);
+            apiErrors++;
+            
+            // Si trop d'erreurs, arrêter pour cette fois
+            if (apiErrors >= 3) {
+              logError('[Stream Monitor] 🚨 Too many API errors, skipping this check cycle');
+              adaptiveInterval = Math.min(adaptiveInterval * 1.2, 600000);
+              return;
+            }
           }
         }
       }
@@ -2485,10 +2574,10 @@ async function performStreamCheck(baseInterval, gracePeriod, batchSize) {
             // Vraiment offline après la période de grâce
             if (wasOnline !== false) {
               streamerStatus[streamerName] = false;
-              logInfo(`[Twitch Monitor] 🔴 ${stream.name} is OFFLINE (after ${streamErrorCounts[streamerName]} checks)`);
+              logInfo(`[Stream Monitor] 🔴 ${stream.name} is OFFLINE (after ${streamErrorCounts[streamerName]} checks)`);
             }
           } else {
-            logDebug(`[Twitch Monitor] ⚠️ ${stream.name} offline check ${streamErrorCounts[streamerName]}/${gracePeriod}`);
+            logDebug(`[Stream Monitor] ⚠️ ${stream.name} offline check ${streamErrorCounts[streamerName]}/${gracePeriod}`);
           }
         } else {
           // Stream online : reset le compteur d'erreurs
@@ -2496,7 +2585,7 @@ async function performStreamCheck(baseInterval, gracePeriod, batchSize) {
           
           if (wasOnline !== true) {
             streamerStatus[streamerName] = true;
-            logInfo(`[Twitch Monitor] 🟢 ${stream.name} is ONLINE`);
+            logInfo(`[Stream Monitor] 🟢 ${stream.name} is ONLINE`);
           }
         }
       }
@@ -2506,10 +2595,10 @@ async function performStreamCheck(baseInterval, gracePeriod, batchSize) {
         adaptiveInterval = Math.max(adaptiveInterval * 0.95, baseInterval);
       }
       
-      logDebug(`[Twitch Monitor] 📊 Check complete: ${allLiveStreamers.size}/${streams.length} online, ${apiErrors} API errors, next check in ${adaptiveInterval/1000}s`);
+      logDebug(`[Stream Monitor] 📊 Check complete: ${allLiveStreamers.size}/${streams.length} online (${allLiveStreamData.filter(s => s.source === 'zevent').length} from ZEvent, ${allLiveStreamData.filter(s => s.source === 'twitch').length} from Twitch), ${apiErrors} API errors, next check in ${adaptiveInterval/1000}s`);
       
     } catch (error) {
-      logError('[Twitch Monitor] ❌ Critical error in monitoring cycle:', error.message);
+      logError('[Stream Monitor] ❌ Critical error in monitoring cycle:', error.message);
       // En cas d'erreur critique, augmenter l'intervalle
       adaptiveInterval = Math.min(adaptiveInterval * 1.5, 600000);
     }
@@ -2541,61 +2630,141 @@ async function getTwitchAppToken() {
 }
 
 // Vérifie si un streamer est online via l’API Twitch
-async function getTwitchStreamStatus(name) {
-  // Vérifier d'abord le cache
+async function getStreamerStatus(name) {
+  // Vérifier d'abord le cache Twitch
   const cached = getTwitchFromCache(name);
   if (cached) {
-    logDebug(`[Twitch API] 📊 Cache hit for ${name}: ${cached.online ? 'ONLINE' : 'OFFLINE'}`);
+    logDebug(`[Stream Status] 📊 Cache hit for ${name}: ${cached.online ? 'ONLINE' : 'OFFLINE'}`);
     return cached;
   }
   
-  // Si pas en cache, faire un appel API
-  logDebug(`[Twitch API] 🌐 Cache miss for ${name}, fetching from API`);
+  logDebug(`[Stream Status] 🌐 Cache miss for ${name}, checking ZEvent API first...`);
   
-  const token = await getTwitchAppToken();
-  // Get stream info
-  const url = `https://api.twitch.tv/helix/streams?user_login=${encodeURIComponent(name)}`;
-  const res = await fetch(url, {
-    headers: {
-      'Client-ID': TWITCH_CLIENT_ID,
-      'Authorization': `Bearer ${token}`,
-    },
-  });
-  const data = await res.json();
-  const userRes = await fetch(`https://api.twitch.tv/helix/users?login=${encodeURIComponent(name)}`, {
-    headers: {
-      'Client-ID': TWITCH_CLIENT_ID,
-      'Authorization': `Bearer ${token}`,
-    },
-  });
-  const userData = await userRes.json();
-  const profileUrl = userData && userData.data && userData.data[0] ? userData.data[0].profile_image_url : null;
+  let result = null;
+  let foundInZEvent = false;
   
-  await getZEventStreamers();
-  const isZEvent = isZEventStreamer(name);
+  try {
+    // 1. Essayer d'abord l'API ZEvent
+    const zEventData = await getZEventFullData();
+    
+    if (zEventData && zEventData.live && Array.isArray(zEventData.live)) {
+      const streamerData = zEventData.live.find(s => 
+        s.twitch && s.twitch.toLowerCase() === name.toLowerCase()
+      );
+      
+      if (streamerData) {
+        foundInZEvent = true;
+        
+        // Récupérer l'avatar depuis l'API Twitch en complément (si nécessaire)
+        let profileUrl = null;
+        try {
+          const token = await getTwitchAppToken();
+          const userRes = await fetch(`https://api.twitch.tv/helix/users?login=${encodeURIComponent(name)}`, {
+            headers: {
+              'Client-ID': TWITCH_CLIENT_ID,
+              'Authorization': `Bearer ${token}`,
+            },
+          });
+          const userData = await userRes.json();
+          profileUrl = userData && userData.data && userData.data[0] ? userData.data[0].profile_image_url : null;
+        } catch (profileError) {
+          logDebug(`[Stream Status] ⚠️ Failed to get profile for ${name} from Twitch: ${profileError.message}`);
+        }
+        
+        result = {
+          online: streamerData.online === true,
+          title: streamerData.title || null,
+          viewers: streamerData.viewersAmount?.number || 0,
+          profileUrl: profileUrl,
+          isZEventStreamer: true,
+          source: 'zevent'
+        };
+        
+        logDebug(`[Stream Status] ✅ Found ${name} in ZEvent API: ${result.online ? 'ONLINE' : 'OFFLINE'} (${result.viewers} viewers)`);
+      }
+    }
+  } catch (zEventError) {
+    logDebug(`[Stream Status] ⚠️ ZEvent API failed for ${name}: ${zEventError.message}`);
+  }
   
-  let result;
-  if (data && data.data && data.data.length > 0) {
-    result = { 
-      online: true, 
-      title: data.data[0].title, 
-      viewers: data.data[0].viewer_count, 
-      profileUrl,
-      isZEventStreamer: isZEvent
-    };
-  } else {
-    result = { 
-      online: false, 
-      profileUrl,
-      isZEventStreamer: isZEvent
-    };
+  // 2. Si pas trouvé dans ZEvent, utiliser l'API Twitch en fallback
+  if (!foundInZEvent) {
+    logDebug(`[Stream Status] 🔄 ${name} not found in ZEvent, falling back to Twitch API...`);
+    
+    try {
+      const token = await getTwitchAppToken();
+      
+      // Get stream info
+      const streamUrl = `https://api.twitch.tv/helix/streams?user_login=${encodeURIComponent(name)}`;
+      const streamRes = await fetch(streamUrl, {
+        headers: {
+          'Client-ID': TWITCH_CLIENT_ID,
+          'Authorization': `Bearer ${token}`,
+        },
+      });
+      const streamData = await streamRes.json();
+      
+      // Get user info
+      const userRes = await fetch(`https://api.twitch.tv/helix/users?login=${encodeURIComponent(name)}`, {
+        headers: {
+          'Client-ID': TWITCH_CLIENT_ID,
+          'Authorization': `Bearer ${token}`,
+        },
+      });
+      const userData = await userRes.json();
+      const profileUrl = userData && userData.data && userData.data[0] ? userData.data[0].profile_image_url : null;
+      
+      // Vérifier si c'est un streamer ZEvent (même si pas en ligne actuellement)
+      await getZEventStreamers();
+      const isZEvent = isZEventStreamer(name);
+      
+      if (streamData && streamData.data && streamData.data.length > 0) {
+        result = { 
+          online: true, 
+          title: streamData.data[0].title, 
+          viewers: streamData.data[0].viewer_count, 
+          profileUrl,
+          isZEventStreamer: isZEvent,
+          source: 'twitch'
+        };
+      } else {
+        result = { 
+          online: false, 
+          profileUrl,
+          isZEventStreamer: isZEvent,
+          source: 'twitch'
+        };
+      }
+      
+      logDebug(`[Stream Status] ✅ Got ${name} from Twitch API: ${result.online ? 'ONLINE' : 'OFFLINE'} ${result.viewers ? `(${result.viewers} viewers)` : ''}`);
+      
+    } catch (twitchError) {
+      logError(`[Stream Status] ❌ Both ZEvent and Twitch APIs failed for ${name}: ${twitchError.message}`);
+      
+      // Retourner un résultat par défaut en cas d'échec total
+      await getZEventStreamers();
+      const isZEvent = isZEventStreamer(name);
+      result = { 
+        online: false, 
+        profileUrl: null,
+        isZEventStreamer: isZEvent,
+        source: 'fallback'
+      };
+    }
   }
   
   // Mettre en cache le résultat
-  setTwitchCache(name, result);
-  logDebug(`[Twitch API] 💾 Cached result for ${name}: ${result.online ? 'ONLINE' : 'OFFLINE'}`);
+  if (result) {
+    setTwitchCache(name, result);
+    logDebug(`[Stream Status] 💾 Cached result for ${name}: ${result.online ? 'ONLINE' : 'OFFLINE'} (source: ${result.source})`);
+  }
   
   return result;
+}
+
+async function getTwitchStreamStatus(name) {
+  // Cette fonction devient un wrapper pour getStreamerStatus pour maintenir la compatibilité
+  return await getStreamerStatus(name);
 }
 const { execFile } = require('child_process');
 const http = require('http');
@@ -3689,13 +3858,12 @@ async function handleApi(req, res) {
   // GET /api/zevent-streamers -> retourne les données ZEvent depuis l'API live
   if (req.method === 'GET' && pathname === '/api/zevent-streamers') {
     try {
-      const response = await fetch('https://zevent.fr/api/');
+      const json = await getZEventFullData();
       
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      if (!json) {
+        throw new Error('Failed to fetch ZEvent data');
       }
       
-      const json = await response.json();
       return sendJson(res, 200, { success: true, ...json });
     } catch (e) {
       return sendJson(res, 500, { success: false, error: 'Failed to fetch ZEvent data: ' + e.message });
@@ -3758,14 +3926,12 @@ async function handleApi(req, res) {
   // GET /api/zevent-stats -> statistiques calculées ZEvent
   if (req.method === 'GET' && pathname === '/api/zevent-stats') {
     try {
-      // Utiliser l'API en direct comme getZEventStreamers()
-      const response = await fetch('https://zevent.fr/api/');
+      // Utiliser la fonction avec cache intégré
+      const json = await getZEventFullData();
       
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      if (!json) {
+        throw new Error('Failed to fetch ZEvent data');
       }
-      
-      const json = await response.json();
       
       if (!json.live || !Array.isArray(json.live)) {
         return sendJson(res, 500, { success: false, error: 'Invalid ZEvent data format' });
